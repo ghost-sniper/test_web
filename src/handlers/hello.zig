@@ -14,10 +14,13 @@ const HelloResponse = struct {
 
 pub fn helloTest(req: *httpz.Request, res: *httpz.Response) !void {
     const raw = req.body() orelse {
+        std.log.info("[POST /hello/test] request body: <empty>", .{});
         res.status = 400;
         try res.json(.{ .code = 400, .message = "missing request body" }, .{});
         return;
     };
+
+    std.log.info("[POST /hello/test] request body: {s}", .{raw});
 
     const parsed = std.json.parseFromSliceLeaky(HelloRequest, res.arena, raw, .{
         .ignore_unknown_fields = true,
