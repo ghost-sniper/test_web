@@ -25,7 +25,7 @@
     .fingerprint = 0x6cb4e496703ff189, // Changing this has security and trust implications.
     // Tracks the earliest Zig version that the package considers to be a
     // supported use case.
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     // This field is optional.
     // Each dependency must either provide a `url` and `hash`, or a `path`.
     // `zig build --fetch` can be used to fetch all dependencies of a package, recursively.
@@ -33,18 +33,18 @@
     // internet connectivity.
     .dependencies = .{
         .httpz = .{
-            .url = "git+https://github.com/karlseguin/http.zig?ref=master#9b14af98fde5e98abb9a8376fe02b42003e835bf",
-            .hash = "httpz-0.0.0-PNVzrMgTCQDhzfBLRRebTx9LU056Ph2erdN9-42rFbhj",
-        },
-        .args = .{
-            .url = "git+https://github.com/ikskuh/zig-args?ref=master#fae95c8350c8791752392cc24efa17b5b8b9275b",
-            .hash = "args-0.0.0-CiLiqrjgAAAJ1dlySoNHUhYpX1btAdDU2Rr4Ls61VTbO",
+            .url = "git+https://github.com/karlseguin/http.zig#66d1ab7244f92f128899c9001a93a5facf6f08ca",
+            .hash = "httpz-0.0.0-PNVzrH0nCQDX88tsvjr_NIR8dwIeQWoxgRQTtz5WRE5q",
         },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
+        "config",
+        "README.md",
+        "deploy",
+        "tests",
         // For example...
         //"LICENSE",
         //"README.md",

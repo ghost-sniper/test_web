@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "cors": {
+    "origins": ["*"],
+    "allow_headers": "Content-Type, Authorization",
+    "max_age": 600
+  },
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/hello/test",
+      "request": {
+        "body_required": true,
+        "fields": [
+          {"name": "name", "type": "string", "default": ""},
+          {"name": "age", "type": "integer", "default": 0},
+          {"name": "email", "type": "string", "default": ""}
+        ]
+      },
+      "rules": [
+        {
+          "id": "hello",
+          "response": {
+            "template": true,
+            "body": {"message": "{{body.name}}明年这个时候你是{{body.age|add:1}}岁", "code": 200}
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/order",
+      "request": {
+        "body_required": true,
+        "fields": [
+          {"name": "product_name", "type": "string", "required": true},
+          {"name": "product_id", "type": "integer", "required": true},
+          {"name": "order_id", "type": "string", "required": true},
+          {"name": "count", "type": "integer", "required": true},
+          {"name": "buyer_account", "type": "string", "required": true},
+          {"name": "pay_method", "type": "string", "required": true}
+        ]
+      },
+      "rules": [
+        {
+          "id": "order-unionpay",
+          "priority": 100,
+          "match": {"body": {"pay_method": "UnionPay"}},
+          "response": {
+            "status": 400,
+            "body": {"code": 400, "message": "不支持银联支付方式"}
+          }
+        },
+        {
+          "id": "order-success",
+          "priority": 0,
+          "response": {"body": {"code": 200, "message": "下单成功"}}
+        }
+      ]
+    }
+  ]
+}

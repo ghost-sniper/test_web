@@ -1,0 +1,24 @@
+[Unit]
+Description=Zig JSON Mock service
+After=network.target
+
+[Service]
+Type=simple
+User=mock
+Group=mock
+WorkingDirectory=/opt/zig-mock
+EnvironmentFile=/etc/zig-mock/mock.env
+ExecStart=/opt/zig-mock/test_web
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=zig-mock
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/zig-mock
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

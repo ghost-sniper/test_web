@@ -1,0 +1,5 @@
+# Optional: serve the web console over HTTPS as well as Mock endpoints.
+# Replace with your domain. All config reads/writes still require the admin Token.
+mock.example.com {
+    reverse_proxy 127.0.0.1:9080
+}

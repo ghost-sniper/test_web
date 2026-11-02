@@ -1,0 +1,10 @@
+# Replace with your domain and merge into your existing Caddy configuration.
+mock.example.com {
+    @admin path /admin /admin/*
+    handle @admin {
+        respond "Not found" 404
+    }
+    handle {
+        reverse_proxy 127.0.0.1:9080
+    }
+}

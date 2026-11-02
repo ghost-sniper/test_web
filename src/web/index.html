@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mock Studio · 接口工作台</title>
+  <link rel="stylesheet" href="/admin/style.css">
+  <script src="/admin/json.js" defer></script>
+  <script src="/admin/app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/admin/"><span class="brand-icon">{m}</span><span>Mock Studio<small>YOUR API PLAYGROUND</small></span></a>
+    <div class="workspace-tag"><span class="dot"></span> 默认工作空间 <span class="local-tag">LOCAL</span></div>
+    <div class="sidebar-title">接口集合 <span id="routeCount">0</span></div>
+    <div class="search-wrap"><span>⌕</span><input id="search" aria-label="搜索接口" placeholder="搜索路径或请求方法"></div>
+    <button id="addRoute" class="add-route" type="button" disabled>＋ 新建接口</button>
+    <nav id="routeList" aria-label="接口列表"><p class="sidebar-empty">连接服务后查看接口</p></nav>
+    <div class="sidebar-footer"><span class="mini-mark">↗</span><div>从一个想法，到一次响应。<small>JSON 驱动 · 即时生效</small></div></div>
+  </aside>
+  <div class="main">
+    <header class="topbar"><div><span class="muted">工作空间</span><span class="slash">/</span>接口工作台</div><div class="connection"><span class="dot" id="connectionDot"></span><span id="connectionState">未连接</span><button id="sessionButton" class="subtle" type="button">连接服务</button></div></header>
+    <main>
+      <section class="page-heading"><div><div class="eyebrow">BUILD. MOCK. TEST.</div><h1>接口工作台<span class="heading-dot">.</span></h1><p>定义响应场景，让每一次联调都有答案。</p></div><div class="heading-actions"><span id="revisionLabel" class="revision">尚未连接</span><button id="refresh" class="secondary" disabled>刷新配置</button><button id="reload" class="secondary" disabled>重载文件</button></div></section>
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <section id="emptyState" class="empty-state"><span class="empty-icon">{ }</span><h2>准备好你的第一个响应</h2><p>连接服务后，选择一个接口开始编辑，或创建新的 Mock 接口。</p><button id="emptyAction" class="primary">连接服务</button></section>
+      <div id="workbench" hidden>
+        <section class="endpoint-heading"><div class="endpoint-title"><span id="methodBadge" class="method post">POST</span><h2 id="endpointPath">/hello/test</h2><span id="dirtyLabel" class="dirty" hidden>未保存</span></div><div class="endpoint-actions"><button id="deleteRoute" class="danger-text">删除接口</button><button id="save" class="primary">保存并生效 <span>↗</span></button></div></section>
+        <div class="columns">
+          <section class="panel editor-panel" aria-label="规则编辑器">
+            <div class="panel-heading"><div><span class="step">01</span><h3>定义接口</h3></div><span class="panel-caption">CONFIGURATION</span></div>
+            <div class="panel-content">
+              <div class="form-row endpoint-fields"><label>请求方法<select id="routeMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option></select></label><label>接口路径<input id="routePath" placeholder="/api/users" spellcheck="false"></label></div>
+              <details class="advanced"><summary>请求字段校验 <span>可选</span></summary><label>请求配置 JSON<textarea id="requestSpec" rows="6" spellcheck="false" aria-label="请求配置 JSON"></textarea></label><p class="hint">可设置 body_required 和 fields；默认值会在匹配前应用。</p></details>
+              <div class="section-title"><h4>响应场景 <span id="ruleCount" class="count-pill">1</span></h4><button id="addRule" class="text-button">＋ 新增场景</button></div>
+              <div id="ruleList" class="rule-tabs" role="tablist" aria-label="响应场景"></div>
+              <div class="rule-heading"><span class="hint">优先级越高，越先匹配；同级按排列顺序。</span><div><button id="copyRule" class="subtle">复制</button><button id="deleteRule" class="danger-text">删除</button></div></div>
+              <div class="form-row"><label>场景名称 / ID<input id="ruleId" spellcheck="false"></label><label class="narrow">优先级<input id="priority" type="number" step="1" min="-2147483648" max="2147483647"></label></div>
+              <details class="advanced" id="matchDetails"><summary>匹配条件 <span>默认匹配所有请求</span></summary>
+                <label>JSON 请求体子集（null 表示不限）<textarea id="matchBody" rows="3" spellcheck="false" placeholder="null"></textarea></label>
+                <div class="form-row"><label>查询参数 JSON 对象<textarea id="matchQuery" rows="3" spellcheck="false" placeholder='{"scenario":"error"}'></textarea></label><label>请求头 JSON 对象<textarea id="matchHeaders" rows="3" spellcheck="false" placeholder='{"X-Scenario":"test"}'></textarea></label></div>
+              </details>
+              <div class="response-heading"><h4>返回内容</h4><label class="checkbox"><input id="template" type="checkbox">启用动态模板</label></div>
+              <div class="form-row"><label>HTTP 状态码<input id="status" type="number" min="200" max="599" step="1"></label><label>模拟延迟 <span class="muted">ms</span><input id="delay" type="number" min="0" max="30000" step="1"></label></div>
+              <label class="code-label">响应体 <span>JSON</span><textarea id="responseBody" rows="9" class="code-editor" spellcheck="false"></textarea></label>
+              <p class="hint" id="templateHint" hidden>支持 {{body.name}} 和 {{body.age|add:1}}，字段需声明为必填或有默认值。</p>
+              <details class="advanced"><summary>自定义响应头 <span>可选</span></summary><label>响应头 JSON 对象<textarea id="responseHeaders" rows="3" spellcheck="false"></textarea></label></details>
+            </div>
+          </section>
+          <section class="panel test-panel" aria-label="接口测试">
+            <div class="panel-heading"><div><span class="step">02</span><h3>测试接口</h3></div><span class="live-label"><span class="dot"></span> LIVE REQUEST</span></div>
+            <div class="panel-content">
+              <p class="test-intro">发送一次真实请求，马上查看结果。</p>
+              <div class="form-row test-url"><label>方法<select id="testMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option></select></label><label>请求路径（含查询参数）<input id="testPath" spellcheck="false"></label></div>
+              <details class="advanced"><summary>请求头 <span>JSON 对象</span></summary><label>测试请求头<textarea id="testHeaders" rows="3" spellcheck="false"></textarea></label></details>
+              <div class="response-heading"><h4>请求体 <span class="muted">JSON</span></h4><button id="fillExample" class="text-button">填入场景示例</button></div>
+              <label class="sr-only" for="testBody">测试请求体</label><textarea id="testBody" rows="8" class="request-editor" spellcheck="false"></textarea>
+              <p id="testHint" class="hint">测试使用服务器上已保存的规则。</p>
+              <button id="send" class="send-button">发送请求 <span>→</span></button>
+            </div>
+            <div class="result-heading"><h4>响应结果</h4><div><span id="resultStatus" class="result-status">等待请求</span><span id="resultTime" class="result-time"></span></div></div>
+            <div id="resultEmpty" class="result-empty"><span>↵</span><p>你的响应会出现在这里</p><small>状态码、耗时、响应头与响应体</small></div>
+            <div id="result" class="result" hidden><div class="result-tabs"><button id="showBody" class="active" aria-pressed="true">响应体</button><button id="showHeaders" aria-pressed="false">响应头</button><button id="copyResult" class="copy-result">复制</button></div><pre id="resultBody" tabindex="0"></pre><pre id="resultHeaders" tabindex="0" hidden></pre></div>
+          </section>
+        </div>
+        <footer class="page-footer"><span><span class="dot"></span> 保存后立即生效，并写入配置文件</span><span>Mock Studio / v1</span></footer>
+      </div>
+    </main>
+  </div>
+  <dialog id="loginDialog" class="login-dialog"><form id="loginForm"><div class="brand-icon">{m}</div><div class="eyebrow">WELCOME TO MOCK STUDIO</div><h2>连接你的 Mock 服务</h2><p>输入服务启动时设置的管理 Token，开始管理和测试接口。</p><label>管理 Token<input id="token" type="password" autocomplete="off" required placeholder="输入 MOCK_ADMIN_TOKEN"></label><p id="loginError" class="error-text" role="alert" hidden></p><button id="loginSubmit" class="primary" type="submit">连接工作空间 →</button><button id="loginCancel" class="subtle" type="button">稍后连接</button><small>Token 仅保留在当前页面内存中，刷新后需重新连接。</small></form></dialog>
+  <dialog id="confirmDialog"><h2 id="confirmTitle">确认操作</h2><p id="confirmMessage"></p><div class="dialog-actions"><button id="confirmCancel" class="secondary">取消</button><button id="confirmProceed" class="primary">确认</button></div></dialog>
+</body>
+</html>
