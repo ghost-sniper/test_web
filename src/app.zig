@@ -1,6 +1,7 @@
 const std = @import("std");
 const httpz = @import("httpz");
 const mock = @import("mock.zig");
+const rate = @import("rate_limit.zig");
 
 pub const App = struct {
     io: std.Io,
@@ -8,6 +9,7 @@ pub const App = struct {
     config_path: []const u8,
     admin_token: []const u8,
     snapshot: mock.Snapshot,
+    rate_limiter: rate.RateLimiter = .{},
     mutex: std.Io.Mutex = .init,
     reload_mutex: std.Io.Mutex = .init,
     generation: u64 = 1,
@@ -36,6 +38,7 @@ pub const App = struct {
         defer self.mutex.unlock(self.io);
         const config = self.snapshot.config;
         const allowed = try cors(config.cors, req, res);
+        const is_health = std.mem.eql(u8, req.url.path, "/healthz");
         if (req.body()) |body| {
             if (body.len > 1024 * 1024) {
                 try reply(res, 413, "request body exceeds 1 MiB");
@@ -60,7 +63,7 @@ pub const App = struct {
             }
             return 0;
         }
-        if (std.mem.eql(u8, req.url.path, "/healthz")) {
+        if (is_health) {
             if (req.method != .GET and req.method != .HEAD) {
                 res.header("Allow", "GET, HEAD, OPTIONS");
                 try reply(res, 405, "method not allowed");
@@ -71,6 +74,22 @@ pub const App = struct {
         }
         for (config.routes) |route| {
             if (!std.mem.eql(u8, route.method, @tagName(req.method)) or !std.mem.eql(u8, route.path, req.url.path)) continue;
+            if (route.rate_limit.requests_per_second != 0 or route.rate_limit.clients.len != 0) {
+                const client = clientIp(req, config.trusted_proxies);
+                const limit = route.rate_limit.limitFor(client);
+                const result = try self.rate_limiter.allow(self.allocator, self.io, route.method, route.path, client, limit);
+                if (result != .allowed) {
+                    res.header("Retry-After", "1");
+                    res.header("Cache-Control", "no-store");
+                    if (allowed and req.header("origin") != null) res.header("Access-Control-Expose-Headers", "Retry-After");
+                    switch (result) {
+                        .limited => try reply(res, 429, "too many requests"),
+                        .capacity => try reply(res, 503, "rate limit tracking capacity reached"),
+                        .allowed => unreachable,
+                    }
+                    return 0;
+                }
+            }
             const body = mock.parseBody(res.arena, route.request, req.body()) catch |err| {
                 switch (err) {
                     error.MissingBody => try reply(res, 400, "missing request body"),
@@ -198,6 +217,18 @@ pub const App = struct {
         try self.readConfig(res);
     }
 };
+
+fn clientIp(req: *httpz.Request, trusted_proxies: []const rate.ClientIp) rate.ClientIp {
+    const peer = rate.ClientIp.fromAddress(req.address);
+    for (trusted_proxies) |proxy| {
+        if (!proxy.eql(peer)) continue;
+        const forwarded = req.header("x-forwarded-for") orelse return peer;
+        // The immediate trusted proxy sets or appends its direct client's IP.
+        const start = if (std.mem.lastIndexOfScalar(u8, forwarded, ',')) |comma| comma + 1 else 0;
+        return rate.ClientIp.parse(std.mem.trim(u8, forwarded[start..], " \t")) catch peer;
+    }
+    return peer;
+}
 
 fn persist(io: std.Io, path: []const u8, bytes: []const u8) !void {
     var file = try std.Io.Dir.cwd().createFileAtomic(io, path, .{ .replace = true });

@@ -174,6 +174,16 @@ Mock 路径和健康检查的正常/错误响应均按策略添加 CORS 头。OP
 | MOCK_CONFIG | config/mock.json | 配置路径，相对路径以进程工作目录为准 |
 | MOCK_ADMIN_TOKEN | 空 | 管理 Token；为空关闭网页管理及全部管理 API |
 
+## 在线配置请求限流
+
+打开 `/admin/`，选中接口并展开 **请求限流**。填写每个客户端的默认每秒上限；需要为个别 IP 设置不同额度时，在 **客户端 IP 单独上限** 中填写 JSON 对象，例如 `{"192.0.2.10": 20, "2001:db8::1": 0}`。上限为 0–10000 的整数，0 表示不限。点击 **保存并生效** 后，配置写入磁盘，新额度立即用于后续请求。旧配置未设限流时仍为不限。
+
+每个服务进程按 **客户端 IP + 请求方法 + 路径** 分别计算最近一秒内已放行的请求，查询参数不会产生新额度。所有响应场景共用所属路由中该客户端的额度。超限直接返回 JSON `429` 和 `Retry-After: 1`。未知路径、健康检查、管理接口和 OPTIONS 不消耗额度。配置保存不会清空仍在窗口内的计数；降低上限时，已有请求会继续计入，直到过期。
+
+客户端默认使用连接来源 IP。经本仓库示例 Caddy 代理访问时，在同一面板的 **可信代理 IP（所有接口）** 填入 `127.0.0.1`（若使用其他上游连接地址，填写代理实际来源 IP），保存后服务才会读取来自该代理的 `X-Forwarded-For`。部署时保持 Mock 后端仅对代理可达。对于多层代理，最后一层代理应将确认的客户端 IP 作为唯一的 `X-Forwarded-For` 值。详见 [Caddy 反向代理请求头说明](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers)。
+
+管理 API 使用同一个 JSON 配置：顶层可选 `"trusted_proxies": ["127.0.0.1"]`，每条路由可选 `"rate_limit": {"requests_per_second": 100, "clients": [{"ip": "192.0.2.10", "requests_per_second": 20}]}`。服务会回收已过期的计数；当计数存储达到容量上限时，无法记录的新请求返回 `503` 和 `Retry-After: 1`。
+
 ## 部署到 Linux
 
 推荐结构：`客户端 → Caddy HTTPS → 127.0.0.1:9080 → Mock 服务`。本仓库提供 `deploy/mock.service`、`deploy/Caddyfile`、`deploy/Caddyfile.admin.example` 和 `deploy/mock.env.example`。部署操作在目标服务器执行，需具备管理员权限；这些文件不会自动发布服务。

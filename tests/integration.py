@@ -21,7 +21,7 @@ EXE = Path(sys.argv.pop(1)).resolve() if len(sys.argv) > 1 else ROOT / "zig-out/
 TOKEN = "integration-test-token-32-characters"
 
 
-class MockServiceTests(unittest.TestCase):
+class MockServer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(prefix="zig-mock-test-")
@@ -83,6 +83,15 @@ class MockServiceTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def admin_config(self):
+        return self.request('GET', '/admin/api/config', headers={'Authorization': f'Bearer {TOKEN}'})
+
+    def save_config(self, config, revision):
+        return self.request('PUT', '/admin/api/config', config, {
+            'Authorization': f'Bearer {TOKEN}', 'If-Match': f'"{revision}"'})
+
+
+class MockServiceTests(MockServer):
     def reload(self, config=None):
         if config is not None:
             self.write_config(config)
@@ -90,13 +99,6 @@ class MockServiceTests(unittest.TestCase):
 
     def setUp(self):
         self.assertEqual(self.reload(copy.deepcopy(self.baseline))[0], 200)
-
-    def admin_config(self):
-        return self.request('GET', '/admin/api/config', headers={'Authorization': f'Bearer {TOKEN}'})
-
-    def save_config(self, config, revision):
-        return self.request('PUT', '/admin/api/config', config, {
-            'Authorization': f'Bearer {TOKEN}', 'If-Match': f'"{revision}"'})
 
     def test_admin_assets_and_protected_config(self):
         for path, mime in (('/admin/', 'text/html'), ('/admin', 'text/html'),
@@ -349,6 +351,74 @@ class MockServiceTests(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+
+
+class RateLimitTests(MockServer):
+    def test_online_limits_isolate_clients_routes_and_methods(self):
+        origin = "https://example.com"
+        saved = self.admin_config()[2]
+        config = saved["config"]
+        for method, path in [("GET", "/limited"), ("POST", "/limited"), ("GET", "/other")]:
+            config["routes"].append({"method": method, "path": path,
+                                     "rules": [{"id": "ok", "response": {"body": {"ok": True}}}]})
+        status, _, saved = self.save_config(config, saved["revision"])
+        self.assertEqual(status, 200)
+        self.assertEqual([self.request("GET", "/limited")[0] for _ in range(3)], [200] * 3)
+        config = saved["config"]
+        for route in config["routes"][-3:]:
+            route["rate_limit"] = {"requests_per_second": 1}
+        status, _, saved = self.save_config(config, saved["revision"])
+        self.assertEqual(status, 200)
+        self.assertEqual(self.request("GET", "/limited", headers={"X-Forwarded-For": "192.0.2.1"})[0], 200)
+        self.assertEqual(self.request("GET", "/limited", headers={"X-Forwarded-For": "192.0.2.2"})[0], 429)
+
+        config = saved["config"]
+        config["trusted_proxies"] = ["127.0.0.1"]
+        config["routes"][-3]["rate_limit"]["clients"] = [
+            {"ip": "192.0.2.2", "requests_per_second": 2},
+            {"ip": "2001:db8::1", "requests_per_second": 0},
+        ]
+        status, _, saved = self.save_config(config, saved["revision"])
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(self.config_path.read_text(encoding="utf-8")), saved["config"])
+
+        def hit(ip, path="/limited", method="GET"):
+            return self.request(method, path, headers={"Origin": origin, "X-Forwarded-For": ip})
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            responses = list(pool.map(lambda _: hit("192.0.2.2"), range(6)))
+        self.assertEqual(sorted(code for code, _, _ in responses), [200, 200, 429, 429, 429, 429])
+        for status, headers, body in responses:
+            if status == 429:
+                self.assertEqual(headers["retry-after"], "1")
+                self.assertEqual(headers["access-control-allow-origin"], "*")
+                self.assertEqual(headers["access-control-expose-headers"], "Retry-After")
+                self.assertEqual(body["code"], 429)
+        self.assertEqual(hit("192.0.2.1")[0], 200)
+        self.assertEqual(hit("198.51.100.5, 192.0.2.1", "/limited?x=1")[0], 429)
+        self.assertEqual(hit("192.0.2.1", "/other")[0], 200)
+        self.assertEqual(hit("192.0.2.1", method="POST")[0], 200)
+        self.assertEqual([hit("2001:db8:0::1")[0] for _ in range(3)], [200] * 3)
+        self.assertEqual(hit("192.0.2.1", "/unknown")[0], 404)
+        self.assertEqual(self.request("GET", "/healthz")[0], 200)
+        self.assertEqual(self.admin_config()[0], 200)
+        self.assertEqual(self.request("OPTIONS", "/limited", headers={
+            "Origin": origin, "Access-Control-Request-Method": "GET",
+        })[0], 204)
+
+        config = saved["config"]
+        config["routes"][-3]["rate_limit"]["clients"][0]["requests_per_second"] = 3
+        status, _, saved = self.save_config(config, saved["revision"])
+        self.assertEqual(status, 200)
+        self.assertEqual(hit("192.0.2.2")[0], 200)
+        self.assertEqual(hit("192.0.2.2")[0], 429)
+        self.assertEqual(hit("192.0.2.1")[0], 429)
+        invalid = copy.deepcopy(saved["config"])
+        invalid["routes"][-3]["rate_limit"]["requests_per_second"] = 10001
+        self.assertEqual(self.save_config(invalid, saved["revision"])[0], 400)
+        self.assertEqual(self.admin_config()[2]["revision"], saved["revision"])
+        time.sleep(1.05)
+        self.assertEqual(hit("192.0.2.1")[0], 200)
 
 
 if __name__ == "__main__":

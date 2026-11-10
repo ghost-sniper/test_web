@@ -30,6 +30,15 @@
             <div class="panel-heading"><div><span class="step">01</span><h3>定义接口</h3></div><span class="panel-caption">CONFIGURATION</span></div>
             <div class="panel-content">
               <div class="form-row endpoint-fields"><label>请求方法<select id="routeMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option></select></label><label>接口路径<input id="routePath" placeholder="/api/users" spellcheck="false"></label></div>
+              <details class="advanced" id="rateLimitDetails">
+                <summary>请求限流 <span id="rateLimitSummary">不限</span></summary>
+                <label>每个客户端每秒上限<input id="routeRateLimit" type="number" min="0" max="10000" step="1" value="0"></label>
+                <p class="hint">0 表示不限。此上限仅用于当前接口，每个客户端独立计数。</p>
+                <label>客户端 IP 单独上限<textarea id="routeClientLimits" rows="3" spellcheck="false" placeholder='{"192.0.2.10": 20}'></textarea></label>
+                <p class="hint">例如 {"192.0.2.10": 20}。未列出的 IP 使用默认上限。</p>
+                <label>可信代理 IP（所有接口）<input id="trustedProxyIps" placeholder="例如 127.0.0.1" spellcheck="false"></label>
+                <p class="hint">直接访问时留空。使用反向代理时，填写代理连接本服务的 IP，多个地址用逗号分隔。</p>
+              </details>
               <details class="advanced"><summary>请求字段校验 <span>可选</span></summary><label>请求配置 JSON<textarea id="requestSpec" rows="6" spellcheck="false" aria-label="请求配置 JSON"></textarea></label><p class="hint">可设置 body_required 和 fields；默认值会在匹配前应用。</p></details>
               <div class="section-title"><h4>响应场景 <span id="ruleCount" class="count-pill">1</span></h4><button id="addRule" class="text-button">＋ 新增场景</button></div>
               <div id="ruleList" class="rule-tabs" role="tablist" aria-label="响应场景"></div>

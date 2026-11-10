@@ -6,7 +6,8 @@ const pretty = value => MockJSON.stringify(value);
 const clone = value => MockJSON.parse(pretty(value));
 const currentRoute = () => state.config?.routes[state.route];
 const currentRule = () => currentRoute()?.rules[state.rule];
-const editorIds = ['routeMethod', 'routePath', 'requestSpec', 'ruleId', 'priority', 'matchBody', 'matchQuery', 'matchHeaders', 'status', 'delay', 'template', 'responseBody', 'responseHeaders'];
+const editorIds = ['routeMethod', 'routePath', 'routeRateLimit', 'routeClientLimits', 'trustedProxyIps', 'requestSpec', 'ruleId', 'priority', 'matchBody', 'matchQuery', 'matchHeaders', 'status', 'delay', 'template', 'responseBody', 'responseHeaders'];
+const maxRequestsPerSecond = 10000;
 
 function notice(message, error = false) {
   $('notice').textContent = message;
@@ -104,6 +105,13 @@ function render() {
   if (!route) return;
   $('routeMethod').value = route.method;
   $('routePath').value = route.path;
+  const policy = route.rate_limit;
+  const defaultLimit = policy?.requests_per_second ?? 0;
+  const clients = policy?.clients ?? [];
+  $('routeRateLimit').value = defaultLimit;
+  $('routeClientLimits').value = pretty(Object.fromEntries(clients.map(client => [client.ip, client.requests_per_second])));
+  $('trustedProxyIps').value = (state.config.trusted_proxies ?? []).join(', ');
+  $('rateLimitSummary').textContent = (defaultLimit ? `${defaultLimit} 次/秒/IP` : '默认不限') + (clients.length ? ` · ${clients.length} 个单独上限` : '');
   $('endpointPath').textContent = route.path;
   $('methodBadge').textContent = route.method;
   $('methodBadge').className = `method ${route.method.toLowerCase()}`;
@@ -169,6 +177,17 @@ function collectRoute() {
   if (!/^\/(?!\/)/.test(next.path) || /[\s?#\\]/.test(next.path)) throw new Error('接口路径需以 / 开头，不能包含空白、反斜线或查询参数。');
   if (next.path === '/admin' || next.path.startsWith('/admin/') || next.path === '/healthz') throw new Error('该路径由管理服务保留，请换一个路径。');
   if (state.config.routes.some((other, i) => i !== state.route && other.method === next.method && other.path === next.path)) throw new Error('同一方法和路径的接口已存在。');
+  const defaultLimit = integer('routeRateLimit', '每个客户端每秒上限', 0, maxRequestsPerSecond);
+  const clients = Object.entries(parseJson('routeClientLimits', '客户端 IP 单独上限', true)).map(([ip, limit]) => {
+    if (!ip.trim() || !Number.isInteger(limit) || limit < 0 || limit > maxRequestsPerSecond) {
+      $('routeClientLimits').focus();
+      throw new Error(`客户端上限需要填写 IP 及 0 到 ${maxRequestsPerSecond} 之间的整数。`);
+    }
+    return { ip: ip.trim(), requests_per_second: limit };
+  });
+  if (defaultLimit || clients.length) next.rate_limit = { requests_per_second: defaultLimit, clients };
+  else delete next.rate_limit;
+  const trustedProxies = $('trustedProxyIps').value.split(',').map(ip => ip.trim()).filter(Boolean);
   next.request = parseJson('requestSpec', '请求配置', true);
   const rule = next.rules[state.rule];
   rule.id = $('ruleId').value.trim();
@@ -183,6 +202,8 @@ function collectRoute() {
   };
   next.rules[state.rule] = rule;
   state.config.routes[state.route] = next;
+  if (trustedProxies.length) state.config.trusted_proxies = trustedProxies;
+  else delete state.config.trusted_proxies;
 }
 function editAction(action) {
   if (state.busy) return;

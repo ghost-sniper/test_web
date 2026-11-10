@@ -22,6 +22,7 @@ pub fn main(init: std.process.Init) !void {
         },
     };
     defer app.snapshot.deinit();
+    defer app.rate_limiter.deinit(init.gpa);
     var server = try httpz.Server(*App).init(init.io, init.gpa, .{
         .address = .{ .ip = try std.Io.net.IpAddress.parse(host, port) },
         .request = .{ .max_body_size = 4 * 1024 * 1024 },
@@ -38,4 +39,5 @@ pub fn main(init: std.process.Init) !void {
 
 test {
     _ = @import("mock.zig");
+    _ = @import("rate_limit.zig");
 }

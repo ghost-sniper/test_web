@@ -1,4 +1,5 @@
 const std = @import("std");
+const rate = @import("rate_limit.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 
@@ -34,6 +35,7 @@ pub const Rule = struct {
 pub const Route = struct {
     method: []const u8,
     path: []const u8,
+    rate_limit: rate.Policy = .{},
     request: Request = .{},
     rules: []const Rule,
 };
@@ -45,6 +47,7 @@ pub const Cors = struct {
 pub const Config = struct {
     version: u8 = 1,
     cors: Cors = .{},
+    trusted_proxies: []const rate.ClientIp = &.{},
     routes: []const Route,
 };
 
@@ -103,6 +106,7 @@ fn headerName(name: []const u8) bool {
 fn validate(config: Config) !void {
     if (config.version != 1) return error.UnsupportedConfigVersion;
     if (config.routes.len > 1000) return error.TooManyRoutes;
+    if (config.trusted_proxies.len > 32) return error.TooManyTrustedProxies;
     if (!cleanHeader(config.cors.allow_headers)) return error.InvalidCors;
     for (config.cors.origins) |origin| {
         if (origin.len == 0 or !cleanHeader(origin)) return error.InvalidCors;
@@ -110,6 +114,14 @@ fn validate(config: Config) !void {
     }
     for (config.routes, 0..) |route, ri| {
         if (!validMethod(route.method)) return error.InvalidMethod;
+        if (route.rate_limit.requests_per_second > rate.max_requests_per_second) return error.InvalidRequestsPerSecond;
+        if (route.rate_limit.clients.len > 256) return error.TooManyClientLimits;
+        for (route.rate_limit.clients, 0..) |client, ci| {
+            if (client.requests_per_second > rate.max_requests_per_second) return error.InvalidRequestsPerSecond;
+            for (route.rate_limit.clients[0..ci]) |previous| {
+                if (client.ip.eql(previous.ip)) return error.DuplicateClientLimit;
+            }
+        }
         if (route.path.len == 0 or route.path[0] != '/' or std.mem.indexOfAny(u8, route.path, "?# \r\n\t") != null) return error.InvalidPath;
         if (std.mem.eql(u8, route.path, "/healthz") or std.mem.eql(u8, route.path, "/admin") or std.mem.startsWith(u8, route.path, "/admin/")) return error.ReservedPath;
         for (config.routes[0..ri]) |other| {

@@ -1,7 +1,9 @@
 {
   "version": 1,
   "cors": {
-    "origins": ["*"],
+    "origins": [
+      "*"
+    ],
     "allow_headers": "Content-Type, Authorization",
     "max_age": 600
   },
@@ -12,9 +14,21 @@
       "request": {
         "body_required": true,
         "fields": [
-          {"name": "name", "type": "string", "default": ""},
-          {"name": "age", "type": "integer", "default": 0},
-          {"name": "email", "type": "string", "default": ""}
+          {
+            "name": "name",
+            "type": "string",
+            "default": ""
+          },
+          {
+            "name": "age",
+            "type": "integer",
+            "default": 0
+          },
+          {
+            "name": "email",
+            "type": "string",
+            "default": ""
+          }
         ]
       },
       "rules": [
@@ -22,10 +36,26 @@
           "id": "hello",
           "response": {
             "template": true,
-            "body": {"message": "{{body.name}}明年这个时候你是{{body.age|add:1}}岁", "code": 200}
+            "body": {
+              "message": "{{body.name}}明年这个时候你是{{body.age|add:1}}岁",
+              "code": 200
+            },
+            "status": 200,
+            "delay_ms": 250,
+            "headers": []
+          },
+          "priority": 0,
+          "match": {
+            "body": null,
+            "query": [],
+            "headers": []
           }
         }
-      ]
+      ],
+      "rate_limit": {
+        "requests_per_second": 500,
+        "clients": []
+      }
     },
     {
       "method": "POST",
@@ -33,30 +63,84 @@
       "request": {
         "body_required": true,
         "fields": [
-          {"name": "product_name", "type": "string", "required": true},
-          {"name": "product_id", "type": "integer", "required": true},
-          {"name": "order_id", "type": "string", "required": true},
-          {"name": "count", "type": "integer", "required": true},
-          {"name": "buyer_account", "type": "string", "required": true},
-          {"name": "pay_method", "type": "string", "required": true}
+          {
+            "name": "product_name",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "product_id",
+            "type": "integer",
+            "required": true
+          },
+          {
+            "name": "order_id",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "count",
+            "type": "integer",
+            "required": true
+          },
+          {
+            "name": "buyer_account",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "pay_method",
+            "type": "string",
+            "required": true
+          }
         ]
       },
       "rules": [
         {
           "id": "order-unionpay",
           "priority": 100,
-          "match": {"body": {"pay_method": "UnionPay"}},
+          "match": {
+            "body": {
+              "pay_method": "UnionPay"
+            },
+            "query": [],
+            "headers": []
+          },
           "response": {
             "status": 400,
-            "body": {"code": 400, "message": "不支持银联支付方式"}
+            "body": {
+              "code": 400,
+              "message": "不支持银联支付方式"
+            },
+            "delay_ms": 150,
+            "template": false,
+            "headers": []
           }
         },
         {
           "id": "order-success",
           "priority": 0,
-          "response": {"body": {"code": 200, "message": "下单成功"}}
+          "response": {
+            "body": {
+              "code": 200,
+              "message": "下单成功"
+            },
+            "status": 200,
+            "delay_ms": 0,
+            "template": false,
+            "headers": []
+          },
+          "match": {
+            "body": null,
+            "query": [],
+            "headers": []
+          }
         }
-      ]
+      ],
+      "rate_limit": {
+        "requests_per_second": 200,
+        "clients": []
+      }
     }
   ]
 }
