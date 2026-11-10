@@ -1,0 +1,13 @@
+*
+!build.zig
+!build.zig.zon
+!scripts/
+!scripts/zig-toolchain.txt
+!src/
+!src/**
+!config/
+!config/mock.json
+!deploy/
+!deploy/docker/
+!deploy/docker/nginx.conf.template
+!deploy/docker/start-mock.sh

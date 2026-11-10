@@ -1,0 +1,22 @@
+server {
+    listen 8080;
+    server_name _;
+
+    client_max_body_size 4m;
+    proxy_http_version 1.1;
+    proxy_read_timeout 60s;
+    proxy_request_buffering on;
+    proxy_cache off;
+    proxy_intercept_errors off;
+    proxy_redirect off;
+    proxy_ignore_headers X-Accel-Redirect;
+
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
+
+    location / {
+        # Keep the original path and query string when forwarding.
+        proxy_pass http://127.0.0.1:${MOCK_PORT};
+    }
+}

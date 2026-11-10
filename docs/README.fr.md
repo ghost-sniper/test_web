@@ -209,6 +209,21 @@ Les routes inconnues, les contrôles de santé, les requêtes d’administration
 
 L’adresse de la connexion identifie le client par défaut. Définissez `trusted_proxies`, par exemple `["127.0.0.1"]`, pour accepter `X-Forwarded-For` des proxys indiqués. Dans cette configuration, rendez le serveur accessible uniquement aux proxys de confiance. Dans une chaîne, le dernier proxy doit transmettre une seule adresse cliente vérifiée. [En-têtes du proxy inverse Caddy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers)
 
+## Exécution avec Docker
+
+Construisez l’image Linux avec Docker. Nginx reçoit les requêtes HTTP et Zig Mock écoute sur l’adresse de bouclage du conteneur.
+
+```sh
+docker build -t zig-mock .
+docker run -d --name zig-mock -p 127.0.0.1:18080:8080 -e MOCK_ADMIN_TOKEN -v zig-mock-data:/var/lib/zig-mock zig-mock
+```
+
+- Modifiez `18080` pour choisir le port de l’hôte. Nginx écoute sur le port `8080` du conteneur. Pour remplacer le port interne `9080` de Mock, ajoutez par exemple `-e MOCK_PORT=19080`.
+- `-e MOCK_ADMIN_TOKEN` transmet le jeton depuis l’environnement du shell. Vous pouvez aussi le fournir avec `--env-file`. Un jeton fourni doit contenir au moins 16 octets. Si le jeton est absent ou vide, consultez `docker logs zig-mock` pour retrouver le jeton généré.
+- Si le volume ne contient pas `mock.json`, il est initialisé à partir de `config/mock.json`. Réutilisez le volume lorsque vous remplacez le conteneur pour conserver les règles enregistrées. Pour appliquer la limitation de débit à chaque adresse IP cliente observée par Nginx, ajoutez `127.0.0.1` aux adresses de proxy de confiance dans la console et enregistrez.
+
+Ouvrez la [console d’administration](http://127.0.0.1:18080/admin), le [catalogue en lecture seule](http://127.0.0.1:18080/viewer) ou le [point de contrôle de santé](http://127.0.0.1:18080/healthz). L’exemple publie le port HTTP sur l’adresse de bouclage de l’hôte. Pour un accès externe en HTTPS, utilisez les exemples de proxy inverse ci-dessous en ciblant le port publié sur l’hôte.
+
 ## Déploiement sous Linux
 
 Les exemples de déploiement suivent le schéma `Client → Caddy ou Nginx (HTTPS) → 127.0.0.1:9080 → serveur Mock`. Exécutez les commandes de déploiement sur le serveur cible avec les privilèges d’administration.

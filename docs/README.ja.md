@@ -209,6 +209,21 @@ Invoke-RestMethod http://127.0.0.1:9080/admin/reload -Method Post -Headers @{ Au
 
 既定では接続元 IP をクライアントとします。`trusted_proxies` に `["127.0.0.1"]` などを設定すると、指定したプロキシからの `X-Forwarded-For` を使用します。この構成では、バックエンドへのアクセスを信頼済みプロキシに限定してください。多段構成では、最後のプロキシが検証済みのクライアント IP を 1 つ渡します。[Caddy のリバースプロキシヘッダー](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers)
 
+## Docker での実行
+
+Docker で Linux イメージをビルドします。Nginx が HTTP リクエストを受け付け、Zig Mock はコンテナ内のループバックアドレスで待ち受けます。
+
+```sh
+docker build -t zig-mock .
+docker run -d --name zig-mock -p 127.0.0.1:18080:8080 -e MOCK_ADMIN_TOKEN -v zig-mock-data:/var/lib/zig-mock zig-mock
+```
+
+- `18080` を変更するとホスト側のポートを指定できます。Nginx はコンテナ内の `8080` で待ち受けます。Mock の内部ポートも `9080` から変更する場合は、`-e MOCK_PORT=19080` などを追加します。
+- `-e MOCK_ADMIN_TOKEN` はシェル環境からトークンを渡します。`--env-file` でも指定できます。指定するトークンは 16 バイト以上必要です。未設定または空の場合は自動生成され、`docker logs zig-mock` で確認できます。
+- ボリュームに `mock.json` がない場合は `config/mock.json` を使って初期化します。コンテナを入れ替える際に同じボリュームを使うと保存済みのルールを引き継げます。Nginx が認識したクライアント IP ごとにレート制限を適用するには、管理画面の信頼済みプロキシ IP に `127.0.0.1` を追加して保存します。
+
+[管理画面](http://127.0.0.1:18080/admin)、[読み取り専用カタログ](http://127.0.0.1:18080/viewer)、[ヘルスチェック](http://127.0.0.1:18080/healthz)にアクセスできます。この例はホストのループバックアドレスに HTTP ポートを公開します。外部に HTTPS で公開する場合は、下記のリバースプロキシの例を使い、転送先にホスト側の公開ポートを指定します。
+
 ## Linux へのデプロイ
 
 デプロイ例は `クライアント → Caddy または Nginx（HTTPS）→ 127.0.0.1:9080 → モックサーバー` の構成を想定しています。デプロイコマンドは対象サーバーで管理者権限を使って実行します。

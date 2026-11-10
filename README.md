@@ -209,6 +209,21 @@ Unknown routes, health checks, admin and catalog requests, and OPTIONS do not co
 
 The peer address identifies the client by default. Set `trusted_proxies`, for example `["127.0.0.1"]`, to accept `X-Forwarded-For` from the listed proxy addresses. Keep the backend reachable only through trusted proxies in that setup. In a chain, the last proxy should pass a single verified client address. [Caddy reverse proxy headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers)
 
+## Run with Docker
+
+Build the Linux image with Docker. It uses Nginx as the HTTP entry point and runs Zig Mock on the container's loopback address.
+
+```sh
+docker build -t zig-mock .
+docker run -d --name zig-mock -p 127.0.0.1:18080:8080 -e MOCK_ADMIN_TOKEN -v zig-mock-data:/var/lib/zig-mock zig-mock
+```
+
+- Change `18080` to choose the host port. Nginx listens on port `8080` inside the container. Set `-e MOCK_PORT=19080` if you also need to change the internal Mock port from `9080`.
+- `-e MOCK_ADMIN_TOKEN` passes the token from your shell environment. You can also provide it through `--env-file` instead. A supplied token must be at least 16 bytes. When the token is unset or empty, find the generated token in `docker logs zig-mock`.
+- The volume is initialized from `config/mock.json` if `mock.json` is missing. Reuse the volume when replacing the container to keep saved rules. To apply per-client limits using the IP seen by Nginx, add `127.0.0.1` to **Trusted proxy IPs** in the console and save.
+
+Open the [admin console](http://127.0.0.1:18080/admin), the [read-only catalog](http://127.0.0.1:18080/viewer) or the [health endpoint](http://127.0.0.1:18080/healthz). The example publishes HTTP on the host's loopback interface. For external access over HTTPS, use the reverse proxy examples below and point the proxy at the published host port.
+
 ## Deploy on Linux
 
 The deployment examples use `Client → Caddy or Nginx (HTTPS) → 127.0.0.1:9080 → Mock server`. Run the deployment commands on the target server with administrative privileges.

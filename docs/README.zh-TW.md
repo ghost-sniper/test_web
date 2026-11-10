@@ -209,6 +209,21 @@ Invoke-RestMethod http://127.0.0.1:9080/admin/reload -Method Post -Headers @{ Au
 
 預設用連線來源 IP 識別用戶端。設定 `trusted_proxies`，例如 `["127.0.0.1"]`，可接受指定代理的 `X-Forwarded-For`。此設定下，後端應僅允許信任的代理存取。多層代理中，最後一個代理應轉送唯一且已驗證的用戶端位址。[Caddy 反向代理標頭](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers)
 
+## 使用 Docker 部署
+
+使用 Docker 建置 Linux 映像檔。映像檔以 Nginx 作為 HTTP 入口，Zig Mock 監聽容器內的回送位址。
+
+```sh
+docker build -t zig-mock .
+docker run -d --name zig-mock -p 127.0.0.1:18080:8080 -e MOCK_ADMIN_TOKEN -v zig-mock-data:/var/lib/zig-mock zig-mock
+```
+
+- 修改 `18080` 可指定主機連接埠。Nginx 在容器內監聽 `8080`。若要將 Mock 的內部連接埠從 `9080` 改成其他值，可加入 `-e MOCK_PORT=19080`。
+- `-e MOCK_ADMIN_TOKEN` 會傳入目前終端機環境中的權杖，也可以改用 `--env-file`。自訂權杖至少需要 16 位元組。權杖未設定或為空時，服務會自動產生，可透過 `docker logs zig-mock` 查看。
+- 資料卷缺少 `mock.json` 時，服務會從 `config/mock.json` 初始化。更換容器時沿用該資料卷即可保留已儲存的規則。若要依 Nginx 看到的用戶端 IP 個別限制速率，請在管理介面的**信任的代理 IP**中加入 `127.0.0.1` 並儲存。
+
+可開啟[管理介面](http://127.0.0.1:18080/admin)、[唯讀目錄](http://127.0.0.1:18080/viewer)及[健康檢查](http://127.0.0.1:18080/healthz)。範例將 HTTP 連接埠繫結至主機的回送位址。若要對外提供 HTTPS，可使用下方的反向代理範例，並將上游指向主機上對應的連接埠。
+
 ## 部署到 Linux
 
 部署範例採用 `用戶端 → Caddy 或 Nginx（HTTPS）→ 127.0.0.1:9080 → Mock 伺服器`。請在目標伺服器上以管理員權限執行部署指令。

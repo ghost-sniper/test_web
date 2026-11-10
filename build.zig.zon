@@ -65,12 +65,10 @@
         "scripts",
         "src",
         "config",
+        "LICENSE",
         "README.md",
         "docs",
         "deploy",
         "tests",
-        // For example...
-        //"LICENSE",
-        //"README.md",
     },
 }

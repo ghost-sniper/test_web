@@ -209,6 +209,21 @@ Unbekannte Routen, Zustandsprüfungen, Admin- und Kataloganfragen sowie OPTIONS 
 
 Standardmäßig gilt die IP der Verbindung als Clientadresse. Tragen Sie in `trusted_proxies` beispielsweise `["127.0.0.1"]` ein, um `X-Forwarded-For` von den eingetragenen Proxys anzunehmen. In dieser Konfiguration sollte das Backend nur über vertrauenswürdige Proxys erreichbar sein. Bei einer Proxykette übermittelt der letzte Proxy eine einzelne geprüfte Clientadresse. [Caddy-Header für Reverse-Proxys](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers)
 
+## Mit Docker starten
+
+Bauen Sie das Linux-Image mit Docker. Nginx nimmt HTTP-Anfragen entgegen und Zig Mock lauscht auf der Loopback-Adresse des Containers.
+
+```sh
+docker build -t zig-mock .
+docker run -d --name zig-mock -p 127.0.0.1:18080:8080 -e MOCK_ADMIN_TOKEN -v zig-mock-data:/var/lib/zig-mock zig-mock
+```
+
+- Ändern Sie `18080`, um den Hostport zu wählen. Nginx lauscht im Container auf Port `8080`. Wenn Sie auch den internen Mock-Port `9080` ändern möchten, fügen Sie beispielsweise `-e MOCK_PORT=19080` hinzu.
+- `-e MOCK_ADMIN_TOKEN` übernimmt das Token aus der Shell-Umgebung. Sie können es auch über `--env-file` übergeben. Ein angegebenes Token muss mindestens 16 Bytes lang sein. Ist es nicht gesetzt oder leer, finden Sie das erzeugte Token in `docker logs zig-mock`.
+- Fehlt `mock.json` im Volume, wird die Datei aus `config/mock.json` übernommen. Verwenden Sie das Volume beim Austausch des Containers weiter, um gespeicherte Regeln zu behalten. Für die Ratenbegrenzung pro Client-IP, die Nginx ermittelt, fügen Sie `127.0.0.1` in der Konsole zu den vertrauenswürdigen Proxy-IP-Adressen hinzu und speichern Sie die Änderung.
+
+Öffnen Sie die [Admin-Konsole](http://127.0.0.1:18080/admin), den [schreibgeschützten Katalog](http://127.0.0.1:18080/viewer) oder die [Zustandsprüfung](http://127.0.0.1:18080/healthz). Das Beispiel veröffentlicht den HTTP-Port auf der Loopback-Adresse des Hosts. Für externen HTTPS-Zugriff können Sie die folgenden Reverse-Proxy-Beispiele verwenden und den veröffentlichten Hostport als Ziel eintragen.
+
 ## Bereitstellung unter Linux
 
 Die Bereitstellungsbeispiele verwenden `Client → Caddy oder Nginx (HTTPS) → 127.0.0.1:9080 → Mockserver`. Führen Sie die Bereitstellungsbefehle mit Administratorrechten auf dem Zielserver aus.
