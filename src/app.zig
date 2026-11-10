@@ -131,7 +131,6 @@ pub const App = struct {
     fn admin(self: *App, req: *httpz.Request, res: *httpz.Response) !void {
         res.header("Cache-Control", "no-store");
         res.header("X-Content-Type-Options", "nosniff");
-        if (self.admin_token.len == 0) return reply(res, 404, "admin disabled: set MOCK_ADMIN_TOKEN and restart");
         if (try adminAsset(req, res)) return;
         const is_config = std.mem.eql(u8, req.url.path, "/admin/api/config");
         const is_reload = std.mem.eql(u8, req.url.path, "/admin/reload");

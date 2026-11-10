@@ -9,6 +9,7 @@ import http.client
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
@@ -67,12 +68,12 @@ class MockServer(unittest.TestCase):
         os.replace(staging, cls.config_path)
 
     @classmethod
-    def request(cls, method, path, body=None, headers=None):
+    def request(cls, method, path, body=None, headers=None, *, port=None):
         headers = dict(headers or {})
         if isinstance(body, (dict, list)):
             body = json.dumps(body, ensure_ascii=False).encode("utf-8")
             headers.setdefault("Content-Type", "application/json")
-        conn = http.client.HTTPConnection("127.0.0.1", cls.port, timeout=10)
+        conn = http.client.HTTPConnection("127.0.0.1", cls.port if port is None else port, timeout=10)
         try:
             conn.request(method, path, body=body, headers=headers)
             response = conn.getresponse()
@@ -320,37 +321,55 @@ class MockServiceTests(MockServer):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(b"AdminTokenTooShort", result.stderr)
 
-    def test_admin_disabled_without_token(self):
-        with socket.socket() as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-        process = subprocess.Popen([str(EXE)], env=dict(self.env, MOCK_PORT=str(port), MOCK_ADMIN_TOKEN=""),
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        try:
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
-                try:
-                    conn.request("POST", "/admin/reload", headers={"Authorization": f"Bearer {TOKEN}"})
-                    response = conn.getresponse()
-                    response.read()
-                    self.assertEqual(response.status, 404)
-                    return
-                except OSError:
-                    if process.poll() is not None:
-                        self.fail("Isolated server exited early")
-                    time.sleep(0.05)
-                finally:
-                    conn.close()
-            self.fail("Isolated server did not start")
-        finally:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+    def test_generated_admin_token_when_missing_or_empty(self):
+        configured_log = Path(self.log.name).read_text(encoding="utf-8", errors="replace")
+        self.assertTrue(TOKEN not in configured_log, "Configured token appeared in startup output")
+        self.assertTrue("Generated admin token:" not in configured_log)
+        generated = set()
+        for mode in ("missing", "empty"):
+            with self.subTest(mode=mode):
+                with socket.socket() as sock:
+                    sock.bind(("127.0.0.1", 0))
+                    port = sock.getsockname()[1]
+                env = dict(self.env, MOCK_PORT=str(port))
+                if mode == "missing":
+                    del env["MOCK_ADMIN_TOKEN"]
+                else:
+                    env["MOCK_ADMIN_TOKEN"] = ""
+                log_path = Path(self.temp.name) / f"server-token-{mode}.log"
+                with log_path.open("wb") as log:
+                    process = subprocess.Popen([str(EXE)], env=env, stdout=log, stderr=log,
+                                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                    try:
+                        deadline = time.monotonic() + 10
+                        while time.monotonic() < deadline:
+                            if process.poll() is not None:
+                                self.fail("Isolated server exited early")
+                            try:
+                                if self.request("GET", "/healthz", port=port)[0] == 200:
+                                    break
+                            except OSError:
+                                pass
+                            time.sleep(0.05)
+                        else:
+                            self.fail("Isolated server did not start")
+                        output = log_path.read_text(encoding="utf-8", errors="replace")
+                        tokens = re.findall(r"^Generated admin token: ([a-f0-9]{64})$", output, re.MULTILINE)
+                        self.assertEqual(len(tokens), 1)
+                        token = tokens[0]
+                        self.assertTrue(token not in generated, "Generated token was reused")
+                        generated.add(token)
+                        self.assertEqual(self.request("GET", "/admin/", port=port)[0], 200)
+                        self.assertEqual(self.request("GET", "/admin/api/config", port=port)[0], 401)
+                        self.assertEqual(self.request("GET", "/admin/api/config",
+                                                      headers={"Authorization": f"Bearer {token}"}, port=port)[0], 200)
+                    finally:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait()
 
 
 class RateLimitTests(MockServer):

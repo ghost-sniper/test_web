@@ -1,0 +1,2 @@
+build.sh text eol=lf
+scripts/zig-toolchain.txt text eol=lf

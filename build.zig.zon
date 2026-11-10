@@ -40,6 +40,9 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
+        "build.sh",
+        "build.ps1",
+        "scripts",
         "src",
         "config",
         "README.md",

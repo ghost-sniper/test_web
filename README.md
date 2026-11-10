@@ -8,15 +8,31 @@
 
 使用与本项目兼容的 Zig **0.17.0** 工具链；依赖提交和 hash 已固定在 `build.zig.zon`。生产构建应固定同一份编译器发行包，不要在部署时自动升级。
 
-在项目根目录运行：
+可以先用对应脚本编译：
+
+```bash
+bash build.sh
+```
 
 ```powershell
-# 网页管理需要设置此变量。请替换为至少 16 字符的随机密钥。
-$env:MOCK_ADMIN_TOKEN = 'replace-with-your-own-random-secret'
+.\build.ps1
+```
+
+脚本会优先使用 PATH 上的 Zig 0.17.0，再检查项目内的工具链缓存。都没有时，会从 [Zig 官方发行目录](https://ziglang.org/download/index.json) 下载、校验 SHA-256，并缓存到 `.zig-cache/toolchains/`。自动下载支持 Linux、macOS 和 Windows 的 x86_64、ARM64，以及 Linux 和 Windows 的 x86。Bash 下载分支需要 `curl`、`sha256sum` 或 `shasum`，以及支持 xz 的 `tar`（Git Bash 下使用 `unzip`）。PowerShell 脚本可在 Windows PowerShell 5.1 或 PowerShell 7 运行；非 Windows 平台的下载分支需要支持 xz 的 `tar`。
+
+两个脚本都先运行 `zig build --fetch` 检查和获取项目依赖，再直接运行 `zig build`，使用默认优化级别 `Debug`。首次下载工具链或缺失依赖时需要网络；工具链和依赖齐备后可离线构建。产物位于 `zig-out/bin/`。
+
+启动服务时，在项目根目录运行：
+
+```powershell
 zig build run
 ```
 
+如果 Zig 由脚本下载且尚未加入 PATH，可以直接运行产物：Windows 执行 `.\zig-out\bin\test_web.exe`，Linux 或 macOS 执行 `./zig-out/bin/test_web`。
+
 默认监听 `0.0.0.0:9080`，本机通过 `http://127.0.0.1:9080` 调用。
+
+未设置 `MOCK_ADMIN_TOKEN` 或其值为空时，每次启动会生成新的管理 Token，在终端打印为 `Generated admin token: …`。如果需要在重启之间使用同一个 Token，可在启动前设置 `MOCK_ADMIN_TOKEN`（至少 16 字符）；手动设置的 Token 不会打印。
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:9080/healthz
@@ -36,7 +52,7 @@ Invoke-RestMethod http://127.0.0.1:9080/order -Method Post `
 
 ## 网页管理界面
 
-启动后打开 `http://127.0.0.1:9080/admin/`，输入 `MOCK_ADMIN_TOKEN` 即可连接。未设置 Token 时整个 `/admin` 区域返回 404。静态登录页面不包含配置或密钥，所有配置读写与重载都需要 Bearer Token。Token 只保留在当前页面内存中，不写入浏览器存储；刷新页面需重新连接。
+启动后打开 `http://127.0.0.1:9080/admin/`，输入终端生成的 Token，或启动前设置的 `MOCK_ADMIN_TOKEN`。静态登录页面不包含配置或密钥，所有配置读写与重载都需要 Bearer Token。Token 只保留在当前页面内存中，不写入浏览器存储；刷新页面需重新连接。
 
 - 左侧搜索、选择或新建接口，编辑请求方法、路径及请求字段校验。
 - 每个接口可新增、复制、修改或删除响应场景，设置优先级、匹配条件、状态码、延迟、模板、响应体和响应头。
@@ -155,7 +171,7 @@ Invoke-RestMethod http://127.0.0.1:9080/admin/reload -Method Post `
 
 文件缺失、JSON 损坏或语义校验失败时返回 400，含 `reason`，旧配置及 generation 保持不变。首次启动加载失败则直接退出。建议先写入同一目录的临时文件，再以原子重命名替换配置，随后调用重载。
 
-`MOCK_ADMIN_TOKEN` 为空时重载接口返回 404；非空但不足 16 字符时拒绝启动；Token 错误返回 401。Token 通过环境变量设置，修改后需要重启，不能通过 JSON 修改。
+若使用自动生成的 Token，请将终端输出的值填入上述命令的 Bearer 请求头。Token 错误或缺失时返回 401；配置文件重载不会更换当前 Token。
 
 ## 跨域与健康检查
 
@@ -172,7 +188,7 @@ Mock 路径和健康检查的正常/错误响应均按策略添加 CORS 头。OP
 | MOCK_HOST | 0.0.0.0 | 监听 IP 地址，支持 IPv4/IPv6，不接受域名 |
 | MOCK_PORT | 9080 | 端口 1–65535 |
 | MOCK_CONFIG | config/mock.json | 配置路径，相对路径以进程工作目录为准 |
-| MOCK_ADMIN_TOKEN | 空 | 管理 Token；为空关闭网页管理及全部管理 API |
+| MOCK_ADMIN_TOKEN | 自动生成 | 可选固定管理 Token，至少 16 字符；未设置或为空时，每次启动生成并打印新值 |
 
 ## 在线配置请求限流
 
@@ -215,7 +231,7 @@ Mock 路径和健康检查的正常/错误响应均按策略添加 CORS 头。OP
    sudo install -m 0644 deploy/mock.service /etc/systemd/system/zig-mock.service
    ```
 
-   使用 `sudoedit /etc/zig-mock/mock.env` 设置随机 Token；示例留空，默认关闭管理界面。配置放在服务可写的 `/var/lib/zig-mock/` 中，密钥环境文件仍放在仅 root 可读的 `/etc/zig-mock/mock.env`。systemd 仅允许服务写入配置数据目录。
+   如需固定 Token，可使用 `sudoedit /etc/zig-mock/mock.env` 设置；留空时从 systemd 启动日志查看生成的 Token。配置放在服务可写的 `/var/lib/zig-mock/` 中，密钥环境文件仍放在仅 root 可读的 `/etc/zig-mock/mock.env`。systemd 仅允许服务写入配置数据目录。
 
    从上一版部署升级时，将原 `/etc/zig-mock/mock.json` 复制到新数据目录并设置 `mock:mock` 所有权，更新环境文件中的 `MOCK_CONFIG`，安装新的 unit，再执行 daemon-reload 和 restart。
 
@@ -241,7 +257,7 @@ Mock 路径和健康检查的正常/错误响应均按策略添加 CORS 头。OP
 
    要通过域名访问网页管理界面，改用 `deploy/Caddyfile.admin.example` 的站点块，该配置也将 `/admin/` 代理到 Zig 服务；浏览器通过 HTTPS 登录，所有管理 API 仍校验 Token。保留默认屏蔽策略时，可执行 `ssh -L 19080:127.0.0.1:9080 user@server`，再打开本机 `http://127.0.0.1:19080/admin/`。
 
-服务不记录请求体和管理 Token，只记录启动、异常和重载失败信息；日志轮转/保留期限由 journald 管理。Mock 调用端没有用户账户、项目隔离、请求记录或调用 Token；管理 Token 保护配置读取、修改和重载。需要限制业务访问时可在反向代理层加访问控制。
+服务不记录请求体或手动设置的 Token；自动生成的 Token 只在启动时打印一次。systemd 会收集启动输出，日志轮转和保留期限由 journald 管理。Mock 调用端没有用户账户、项目隔离、请求记录或调用 Token；管理 Token 保护配置读取、修改和重载。需要限制业务访问时可在反向代理层加访问控制。
 
 ## 验证
 

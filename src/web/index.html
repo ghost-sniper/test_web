@@ -75,7 +75,7 @@
       </div>
     </main>
   </div>
-  <dialog id="loginDialog" class="login-dialog"><form id="loginForm"><div class="brand-icon">{m}</div><div class="eyebrow">WELCOME TO MOCK STUDIO</div><h2>连接你的 Mock 服务</h2><p>输入服务启动时设置的管理 Token，开始管理和测试接口。</p><label>管理 Token<input id="token" type="password" autocomplete="off" required placeholder="输入 MOCK_ADMIN_TOKEN"></label><p id="loginError" class="error-text" role="alert" hidden></p><button id="loginSubmit" class="primary" type="submit">连接工作空间 →</button><button id="loginCancel" class="subtle" type="button">稍后连接</button><small>Token 仅保留在当前页面内存中，刷新后需重新连接。</small></form></dialog>
+  <dialog id="loginDialog" class="login-dialog"><form id="loginForm"><div class="brand-icon">{m}</div><div class="eyebrow">WELCOME TO MOCK STUDIO</div><h2>连接你的 Mock 服务</h2><p>输入服务启动时在终端显示的 Token，或你手动设置的管理 Token。</p><label>管理 Token<input id="token" type="password" autocomplete="off" required placeholder="输入管理 Token"></label><p id="loginError" class="error-text" role="alert" hidden></p><button id="loginSubmit" class="primary" type="submit">连接工作空间 →</button><button id="loginCancel" class="subtle" type="button">稍后连接</button><small>Token 仅保留在当前页面内存中，刷新后需重新连接。</small></form></dialog>
   <dialog id="confirmDialog"><h2 id="confirmTitle">确认操作</h2><p id="confirmMessage"></p><div class="dialog-actions"><button id="confirmCancel" class="secondary">取消</button><button id="confirmProceed" class="primary">确认</button></div></dialog>
 </body>
 </html>
