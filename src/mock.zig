@@ -35,9 +35,15 @@ pub const Rule = struct {
 pub const Route = struct {
     method: []const u8,
     path: []const u8,
+    folder_id: ?[]const u8 = null,
     rate_limit: rate.Policy = .{},
     request: Request = .{},
     rules: []const Rule,
+};
+pub const Folder = struct {
+    id: []const u8,
+    name: []const u8,
+    parent_id: ?[]const u8 = null,
 };
 pub const Cors = struct {
     origins: []const []const u8 = &.{"*"},
@@ -48,6 +54,7 @@ pub const Config = struct {
     version: u8 = 1,
     cors: Cors = .{},
     trusted_proxies: []const rate.ClientIp = &.{},
+    folders: []const Folder = &.{},
     routes: []const Route,
 };
 
@@ -57,13 +64,16 @@ pub const Snapshot = struct {
     config: Config,
     revision: [64]u8,
     source: []const u8,
+    viewer_catalog: []const u8,
 
     pub fn parse(allocator: Allocator, bytes: []const u8) !Snapshot {
         var arena = std.heap.ArenaAllocator.init(allocator);
         errdefer arena.deinit();
         const config = try std.json.parseFromSliceLeaky(Config, arena.allocator(), bytes, .{ .allocate = .alloc_always });
-        try validate(config);
-        return .{ .arena = arena, .config = config, .revision = digest(bytes), .source = try arena.allocator().dupe(u8, bytes) };
+        try validate(config, arena.allocator());
+        const source = try arena.allocator().dupe(u8, bytes);
+        const viewer_catalog = try buildViewerCatalog(config, arena.allocator());
+        return .{ .arena = arena, .config = config, .revision = digest(bytes), .source = source, .viewer_catalog = viewer_catalog };
     }
 
     pub fn load(io: std.Io, allocator: Allocator, path: []const u8) !Snapshot {
@@ -76,6 +86,33 @@ pub const Snapshot = struct {
         self.arena.deinit();
     }
 };
+
+fn buildViewerCatalog(config: Config, allocator: Allocator) ![]const u8 {
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    defer output.deinit();
+    var writer: std.json.Stringify = .{ .writer = &output.writer };
+    try writer.beginObject();
+    try writer.objectField("folders");
+    try writer.write(config.folders);
+    try writer.objectField("routes");
+    try writer.beginArray();
+    for (config.routes) |route| {
+        try writer.write(.{
+            .method = route.method,
+            .path = route.path,
+            .folder_id = route.folder_id,
+            .request = route.request,
+            .rules = route.rules,
+        });
+    }
+    try writer.endArray();
+    try writer.endObject();
+    return output.toOwnedSlice();
+}
+
+pub fn isViewerPath(path: []const u8) bool {
+    return std.mem.eql(u8, path, "/viewer") or std.mem.startsWith(u8, path, "/viewer/");
+}
 
 pub fn digest(bytes: []const u8) [64]u8 {
     var hash: [32]u8 = undefined;
@@ -103,9 +140,47 @@ fn headerName(name: []const u8) bool {
     return true;
 }
 
-fn validate(config: Config) !void {
+fn validateFolders(config: Config, allocator: Allocator) !void {
+    if (config.folders.len > 1000) return error.TooManyFolders;
+    var by_id: std.StringHashMapUnmanaged(Folder) = .empty;
+    defer by_id.deinit(allocator);
+    for (config.folders, 0..) |folder, index| {
+        if (folder.id.len == 0 or folder.id.len > 64) return error.InvalidFolderId;
+        if (folder.name.len == 0 or folder.name.len > 256 or
+            std.mem.trim(u8, folder.name, " \t\r\n").len != folder.name.len or
+            std.mem.indexOfAny(u8, folder.name, "/\\\r\n") != null) return error.InvalidFolderName;
+        const entry = try by_id.getOrPut(allocator, folder.id);
+        if (entry.found_existing) return error.DuplicateFolderId;
+        entry.value_ptr.* = folder;
+        for (config.folders[0..index]) |other| {
+            const same_parent = if (folder.parent_id) |parent|
+                std.mem.eql(u8, parent, other.parent_id orelse "")
+            else
+                other.parent_id == null;
+            if (same_parent and std.mem.eql(u8, folder.name, other.name)) return error.DuplicateFolderName;
+        }
+    }
+    for (config.folders) |folder| {
+        var parent = folder.parent_id;
+        var depth: usize = 1;
+        while (parent) |id| {
+            if (std.mem.eql(u8, folder.id, id)) return error.FolderCycle;
+            parent = (by_id.get(id) orelse return error.UnknownParentFolder).parent_id;
+            depth += 1;
+            if (depth > 16) return error.FolderDepthExceeded;
+        }
+    }
+    for (config.routes) |route| {
+        if (route.folder_id) |id| {
+            if (!by_id.contains(id)) return error.UnknownRouteFolder;
+        }
+    }
+}
+
+fn validate(config: Config, allocator: Allocator) !void {
     if (config.version != 1) return error.UnsupportedConfigVersion;
     if (config.routes.len > 1000) return error.TooManyRoutes;
+    try validateFolders(config, allocator);
     if (config.trusted_proxies.len > 32) return error.TooManyTrustedProxies;
     if (!cleanHeader(config.cors.allow_headers)) return error.InvalidCors;
     for (config.cors.origins) |origin| {
@@ -123,7 +198,8 @@ fn validate(config: Config) !void {
             }
         }
         if (route.path.len == 0 or route.path[0] != '/' or std.mem.indexOfAny(u8, route.path, "?# \r\n\t") != null) return error.InvalidPath;
-        if (std.mem.eql(u8, route.path, "/healthz") or std.mem.eql(u8, route.path, "/admin") or std.mem.startsWith(u8, route.path, "/admin/")) return error.ReservedPath;
+        if (std.mem.eql(u8, route.path, "/healthz") or std.mem.eql(u8, route.path, "/admin") or
+            std.mem.startsWith(u8, route.path, "/admin/") or isViewerPath(route.path)) return error.ReservedPath;
         for (config.routes[0..ri]) |other| {
             if (std.mem.eql(u8, route.method, other.method) and std.mem.eql(u8, route.path, other.path)) return error.DuplicateRoute;
         }

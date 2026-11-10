@@ -3,26 +3,48 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mock Studio · 接口工作台</title>
+  <script src="/admin/theme.js"></script>
+  <link rel="stylesheet" href="/admin/themes.css">
   <link rel="stylesheet" href="/admin/style.css">
   <script src="/admin/json.js" defer></script>
   <script src="/admin/app.js" defer></script>
 </head>
 <body>
-  <aside class="sidebar">
+  <button id="sidebarBackdrop" class="sidebar-backdrop" type="button" aria-label="关闭接口侧栏" tabindex="-1" hidden></button>
+  <aside id="collectionSidebar" class="sidebar" aria-label="接口集合">
+    <button id="sidebarClose" class="sidebar-close" type="button" aria-label="关闭接口侧栏">×</button>
     <a class="brand" href="/admin/"><span class="brand-icon">{m}</span><span>Mock Studio<small>YOUR API PLAYGROUND</small></span></a>
     <div class="workspace-tag"><span class="dot"></span> 默认工作空间 <span class="local-tag">LOCAL</span></div>
-    <div class="sidebar-title">接口集合 <span id="routeCount">0</span></div>
-    <div class="search-wrap"><span>⌕</span><input id="search" aria-label="搜索接口" placeholder="搜索路径或请求方法"></div>
-    <button id="addRoute" class="add-route" type="button" disabled>＋ 新建接口</button>
+    <div class="sidebar-title">接口集合 <span id="routeCount" aria-live="polite">0</span></div>
+    <div class="search-wrap"><span aria-hidden="true">⌕</span><input id="search" type="search" aria-label="按 URL 搜索接口" placeholder="搜索 URL 或路径"></div>
+    <div class="collection-actions">
+      <button id="addRoute" class="add-route" type="button" disabled>＋ 新建接口</button>
+      <button id="addFolder" class="add-route" type="button" disabled>＋ 新建目录</button>
+    </div>
     <nav id="routeList" aria-label="接口列表"><p class="sidebar-empty">连接服务后查看接口</p></nav>
     <div class="sidebar-footer"><span class="mini-mark">↗</span><div>从一个想法，到一次响应。<small>JSON 驱动 · 即时生效</small></div></div>
   </aside>
-  <div class="main">
-    <header class="topbar"><div><span class="muted">工作空间</span><span class="slash">/</span>接口工作台</div><div class="connection"><span class="dot" id="connectionDot"></span><span id="connectionState">未连接</span><button id="sessionButton" class="subtle" type="button">连接服务</button></div></header>
+  <div id="workspaceMain" class="main">
+    <header class="topbar">
+      <div class="topbar-start">
+        <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-controls="collectionSidebar" aria-expanded="true" aria-label="折叠接口侧栏" title="折叠接口侧栏">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <rect x="2.5" y="3.5" width="15" height="13" rx="2"></rect><path d="M8 4v12"></path>
+          </svg>
+          <span>目录</span>
+        </button>
+        <div><span class="muted">工作空间</span><span class="slash">/</span>接口工作台</div>
+      </div>
+      <div class="topbar-actions">
+        <a href="/viewer" class="secondary viewer-link" target="_blank" rel="noopener">只读视图 ↗</a>
+        <label class="theme-control">主题<select data-theme-picker aria-label="界面主题"></select></label>
+        <div class="connection"><span class="dot" id="connectionDot"></span><span id="connectionState">未连接</span><button id="sessionButton" class="subtle" type="button">连接服务</button></div>
+      </div>
+    </header>
     <main>
       <section class="page-heading"><div><div class="eyebrow">BUILD. MOCK. TEST.</div><h1>接口工作台<span class="heading-dot">.</span></h1><p>定义响应场景，让每一次联调都有答案。</p></div><div class="heading-actions"><span id="revisionLabel" class="revision">尚未连接</span><button id="refresh" class="secondary" disabled>刷新配置</button><button id="reload" class="secondary" disabled>重载文件</button></div></section>
       <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
-      <section id="emptyState" class="empty-state"><span class="empty-icon">{ }</span><h2>准备好你的第一个响应</h2><p>连接服务后，选择一个接口开始编辑，或创建新的 Mock 接口。</p><button id="emptyAction" class="primary">连接服务</button></section>
+      <section id="emptyState" class="empty-state"><span class="empty-icon">{ }</span><h2>准备好你的第一个响应</h2><p>连接服务后，选择一个接口开始编辑，或创建新的 Mock 接口。</p><button id="emptyAction" class="primary">连接服务</button> <button id="emptySave" class="secondary" hidden>保存并生效</button></section>
       <div id="workbench" hidden>
         <section class="endpoint-heading"><div class="endpoint-title"><span id="methodBadge" class="method post">POST</span><h2 id="endpointPath">/hello/test</h2><span id="dirtyLabel" class="dirty" hidden>未保存</span></div><div class="endpoint-actions"><button id="deleteRoute" class="danger-text">删除接口</button><button id="save" class="primary">保存并生效 <span>↗</span></button></div></section>
         <div class="columns">
@@ -30,6 +52,7 @@
             <div class="panel-heading"><div><span class="step">01</span><h3>定义接口</h3></div><span class="panel-caption">CONFIGURATION</span></div>
             <div class="panel-content">
               <div class="form-row endpoint-fields"><label>请求方法<select id="routeMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option></select></label><label>接口路径<input id="routePath" placeholder="/api/users" spellcheck="false"></label></div>
+              <div class="form-row"><label>所属目录<select id="routeFolder"><option value="">根目录</option></select></label></div>
               <details class="advanced" id="rateLimitDetails">
                 <summary>请求限流 <span id="rateLimitSummary">不限</span></summary>
                 <label>每个客户端每秒上限<input id="routeRateLimit" type="number" min="0" max="10000" step="1" value="0"></label>
@@ -75,7 +98,32 @@
       </div>
     </main>
   </div>
-  <dialog id="loginDialog" class="login-dialog"><form id="loginForm"><div class="brand-icon">{m}</div><div class="eyebrow">WELCOME TO MOCK STUDIO</div><h2>连接你的 Mock 服务</h2><p>输入服务启动时在终端显示的 Token，或你手动设置的管理 Token。</p><label>管理 Token<input id="token" type="password" autocomplete="off" required placeholder="输入管理 Token"></label><p id="loginError" class="error-text" role="alert" hidden></p><button id="loginSubmit" class="primary" type="submit">连接工作空间 →</button><button id="loginCancel" class="subtle" type="button">稍后连接</button><small>Token 仅保留在当前页面内存中，刷新后需重新连接。</small></form></dialog>
+  <dialog id="loginDialog" class="login-dialog"><form id="loginForm"><div class="brand-icon">{m}</div><label class="theme-control">主题<select data-theme-picker aria-label="界面主题"></select></label><div class="eyebrow">WELCOME TO MOCK STUDIO</div><h2>连接你的 Mock 服务</h2><p>输入服务启动时在终端显示的 Token，或你手动设置的管理 Token。</p><label>管理 Token<input id="token" type="password" autocomplete="off" required placeholder="输入管理 Token"></label><p id="loginError" class="error-text" role="alert" hidden></p><button id="loginSubmit" class="primary" type="submit">连接工作空间 →</button><button id="loginCancel" class="subtle" type="button">稍后连接</button><small>Token 仅保留在当前页面内存中，刷新后需重新连接。</small></form></dialog>
   <dialog id="confirmDialog"><h2 id="confirmTitle">确认操作</h2><p id="confirmMessage"></p><div class="dialog-actions"><button id="confirmCancel" class="secondary">取消</button><button id="confirmProceed" class="primary">确认</button></div></dialog>
+  <dialog id="folderDialog" aria-labelledby="folderTitle">
+    <form id="folderForm">
+      <h2 id="folderTitle">新建目录</h2>
+      <div class="form-row"><label>目录名称<input id="folderName" required maxlength="64" autofocus></label></div>
+      <label>上级目录<select id="folderParent"></select></label>
+      <p id="folderError" class="error-text" role="alert" hidden></p>
+      <p id="folderDeleteHint" hidden>请先移出此目录中的接口和子目录，再删除目录。</p>
+      <div class="dialog-actions">
+        <button id="folderDelete" class="danger-text" type="button" hidden>删除目录</button>
+        <button id="folderCancel" class="secondary" type="button">取消</button>
+        <button class="primary" type="submit">应用</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="routeMoveDialog" aria-labelledby="routeMoveTitle">
+    <form id="routeMoveForm">
+      <h2 id="routeMoveTitle">移动接口</h2>
+      <p id="routeMoveLabel"></p>
+      <label>目标目录<select id="routeMoveTarget" autofocus></select></label>
+      <div class="dialog-actions">
+        <button id="routeMoveCancel" class="secondary" type="button">取消</button>
+        <button class="primary" type="submit">移动到此目录</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

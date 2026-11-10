@@ -29,9 +29,14 @@ pub const App = struct {
     }
 
     fn process(self: *App, req: *httpz.Request, res: *httpz.Response) !u32 {
-        // Admin endpoints deliberately do not inherit public Mock CORS policy.
-        if (std.mem.eql(u8, req.url.path, "/admin") or std.mem.startsWith(u8, req.url.path, "/admin/")) {
-            try self.admin(req, res);
+        // The console and viewer do not inherit Mock CORS policy.
+        const path = req.url.path;
+        const is_viewer = mock.isViewerPath(path);
+        if (is_viewer or std.mem.eql(u8, path, "/admin") or std.mem.startsWith(u8, path, "/admin/")) {
+            res.header("Cache-Control", "no-store");
+            res.header("X-Content-Type-Options", "nosniff");
+            if (try webAsset(req, res)) return 0;
+            if (is_viewer) try self.viewer(req, res) else try self.admin(req, res);
             return 0;
         }
         try self.mutex.lock(self.io);
@@ -129,9 +134,6 @@ pub const App = struct {
     }
 
     fn admin(self: *App, req: *httpz.Request, res: *httpz.Response) !void {
-        res.header("Cache-Control", "no-store");
-        res.header("X-Content-Type-Options", "nosniff");
-        if (try adminAsset(req, res)) return;
         const is_config = std.mem.eql(u8, req.url.path, "/admin/api/config");
         const is_reload = std.mem.eql(u8, req.url.path, "/admin/reload");
         if (!is_config and !is_reload) return reply(res, 404, "not found");
@@ -140,8 +142,9 @@ pub const App = struct {
             return reply(res, 405, "method not allowed");
         }
         const auth = req.header("authorization") orelse "";
-        const expected = try std.fmt.allocPrint(res.arena, "Bearer {s}", .{self.admin_token});
-        if (!secureEqual(auth, expected)) {
+        const prefix = "Bearer ";
+        const token = if (std.mem.startsWith(u8, auth, prefix)) auth[prefix.len..] else "";
+        if (!secureEqual(token, self.admin_token)) {
             res.header("WWW-Authenticate", "Bearer");
             return reply(res, 401, "unauthorized");
         }
@@ -177,6 +180,20 @@ pub const App = struct {
         // across browser edits instead of normalizing the dynamic JSON tree.
         res.body = try std.fmt.allocPrint(res.arena, "{{\"generation\":{d},\"revision\":\"{s}\",\"config\":{s}}}", .{
             self.generation, self.snapshot.revision, self.snapshot.source,
+        });
+        res.content_type = .JSON;
+    }
+
+    fn viewer(self: *App, req: *httpz.Request, res: *httpz.Response) !void {
+        if (!std.mem.eql(u8, req.url.path, "/viewer/api/catalog")) return reply(res, 404, "not found");
+        if (req.method != .GET) {
+            res.header("Allow", "GET");
+            return reply(res, 405, "method not allowed");
+        }
+        try self.mutex.lock(self.io);
+        defer self.mutex.unlock(self.io);
+        res.body = try std.fmt.allocPrint(res.arena, "{{\"generation\":{d},\"catalog\":{s}}}", .{
+            self.generation, self.snapshot.viewer_catalog,
         });
         res.content_type = .JSON;
     }
@@ -237,14 +254,23 @@ fn persist(io: std.Io, path: []const u8, bytes: []const u8) !void {
     try file.replace(io);
 }
 
-fn adminAsset(req: *httpz.Request, res: *httpz.Response) !bool {
+fn webAsset(req: *httpz.Request, res: *httpz.Response) !bool {
     const Asset = struct { path: []const u8, body: []const u8, mime: []const u8 };
     const assets = [_]Asset{
         .{ .path = "/admin", .body = @embedFile("web/index.html"), .mime = "text/html; charset=utf-8" },
         .{ .path = "/admin/", .body = @embedFile("web/index.html"), .mime = "text/html; charset=utf-8" },
         .{ .path = "/admin/app.js", .body = @embedFile("web/app.js"), .mime = "text/javascript; charset=utf-8" },
         .{ .path = "/admin/json.js", .body = @embedFile("web/json.js"), .mime = "text/javascript; charset=utf-8" },
+        .{ .path = "/admin/theme.js", .body = @embedFile("web/theme.js"), .mime = "text/javascript; charset=utf-8" },
+        .{ .path = "/admin/themes.css", .body = @embedFile("web/themes.css"), .mime = "text/css; charset=utf-8" },
         .{ .path = "/admin/style.css", .body = @embedFile("web/style.css"), .mime = "text/css; charset=utf-8" },
+        .{ .path = "/viewer", .body = @embedFile("web/viewer.html"), .mime = "text/html; charset=utf-8" },
+        .{ .path = "/viewer/", .body = @embedFile("web/viewer.html"), .mime = "text/html; charset=utf-8" },
+        .{ .path = "/viewer/assets/viewer.js", .body = @embedFile("web/viewer.js"), .mime = "text/javascript; charset=utf-8" },
+        .{ .path = "/viewer/assets/json.js", .body = @embedFile("web/json.js"), .mime = "text/javascript; charset=utf-8" },
+        .{ .path = "/viewer/assets/theme.js", .body = @embedFile("web/theme.js"), .mime = "text/javascript; charset=utf-8" },
+        .{ .path = "/viewer/assets/themes.css", .body = @embedFile("web/themes.css"), .mime = "text/css; charset=utf-8" },
+        .{ .path = "/viewer/assets/style.css", .body = @embedFile("web/style.css"), .mime = "text/css; charset=utf-8" },
     };
     for (assets) |asset| {
         if (!std.mem.eql(u8, req.url.path, asset.path)) continue;

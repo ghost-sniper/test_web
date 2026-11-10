@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mock Studio · 只读视图</title>
+  <script src="/viewer/assets/theme.js"></script>
+  <link rel="stylesheet" href="/viewer/assets/themes.css">
+  <link rel="stylesheet" href="/viewer/assets/style.css">
+  <script src="/viewer/assets/json.js" defer></script>
+  <script src="/viewer/assets/viewer.js" defer></script>
+</head>
+<body class="viewer-page">
+  <header class="topbar">
+    <div class="topbar-start">
+      <span class="brand-icon" aria-hidden="true">{m}</span>
+      <strong>Mock Studio</strong>
+      <span class="viewer-badge">只读</span>
+    </div>
+    <div class="topbar-actions">
+      <label class="theme-control">主题<select data-theme-picker aria-label="界面主题"></select></label>
+    </div>
+  </header>
+  <main>
+    <section class="page-heading">
+      <div>
+        <div class="eyebrow">MOCK CATALOG</div>
+        <h1>Mock 接口<span class="heading-dot">.</span></h1>
+        <p>浏览可调用的接口、请求信息和已生效的 Mock 规则。</p>
+      </div>
+      <div class="heading-actions">
+        <span id="viewerGeneration" class="revision"></span>
+        <button id="viewerRefresh" class="secondary" type="button">刷新接口</button>
+      </div>
+    </section>
+    <div id="viewerNotice" class="notice" role="status" aria-live="polite" hidden></div>
+    <div id="viewerContent" class="viewer-layout" hidden>
+      <section class="panel" aria-labelledby="viewerListTitle">
+        <div class="panel-heading"><h2 id="viewerListTitle">接口列表</h2><span id="viewerCount" class="count-pill" aria-live="polite"></span></div>
+        <div class="panel-content">
+          <label>搜索接口路径<input id="viewerSearch" type="search" placeholder="例如 /order"></label>
+          <ul id="viewerRoutes" class="collection-list viewer-routes"></ul>
+          <p id="viewerNoResults" class="hint" hidden>没有匹配的接口。</p>
+        </div>
+      </section>
+      <section class="panel" aria-labelledby="viewerRouteTitle">
+        <div class="panel-heading">
+          <div class="viewer-route-heading">
+            <span id="viewerMethod" class="method" aria-hidden="true" hidden></span>
+            <h2 id="viewerRouteTitle">接口详情</h2>
+          </div>
+          <span id="viewerFolder" class="viewer-folder"></span>
+        </div>
+        <div id="viewerDetails" class="panel-content viewer-details"></div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

@@ -138,6 +138,68 @@ class MockServiceTests(MockServer):
         self.assertEqual(self.request('GET', '/online')[0], 404)
         self.assertEqual(len(json.loads(self.config_path.read_text(encoding='utf-8'))['routes']), 2)
 
+    def test_viewer_reads_current_catalog_without_write_access(self):
+        current = self.admin_config()[2]
+        path = '/viewer/api/catalog'
+        status, _, page = self.request('GET', '/viewer')
+        self.assertEqual(status, 200)
+        self.assertNotIn('type="password"', page)
+        self.assertIn('/viewer/assets/viewer.js', page)
+        self.assertEqual(self.request('GET', '/viewer/assets/viewer.js')[0], 200)
+        self.assertEqual(self.request('GET', '/admin/viewer/api/config')[0], 404)
+        status, headers, snapshot = self.request('GET', path, headers={'Origin': 'https://frontend.example'})
+        self.assertEqual(status, 200)
+        self.assertNotIn('access-control-allow-origin', headers)
+        self.assertEqual(set(snapshot), {'generation', 'catalog'})
+        self.assertEqual(snapshot['generation'], current['generation'])
+        catalog = snapshot['catalog']
+        self.assertEqual(set(catalog), {'folders', 'routes'})
+        self.assertEqual(catalog['folders'], current['config'].get('folders', []))
+        hello, order = catalog['routes']
+        self.assertEqual(set(hello), {'method', 'path', 'folder_id', 'request', 'rules'})
+        self.assertEqual((hello['method'], hello['path']), ('POST', '/hello/test'))
+        self.assertEqual(hello['request']['fields'][0]['name'], 'name')
+        self.assertEqual(order['rules'][0]['match']['body'], {'pay_method': 'UnionPay'})
+        self.assertEqual(order['rules'][0]['response']['body'], current['config']['routes'][1]['rules'][0]['response']['body'])
+        for method in ('PUT', 'POST', 'DELETE'):
+            status, headers, _ = self.request(method, path)
+            self.assertEqual((status, headers['allow']), (405, 'GET'))
+        self.assertEqual(self.request('GET', '/admin/api/config')[0], 401)
+        self.assertEqual(self.request('PUT', '/admin/api/config', current['config'], {
+            'If-Match': f'"{current["revision"]}"'})[0], 401)
+        self.assertEqual(self.request('POST', '/admin/reload')[0], 401)
+        config = copy.deepcopy(current['config'])
+        for reserved_path in ('/viewer', path):
+            config['routes'][0]['path'] = reserved_path
+            status, _, error = self.save_config(config, current['revision'])
+            self.assertEqual((status, error['reason']), (400, 'ReservedPath'))
+        self.assertEqual(self.admin_config()[2], current)
+
+    def test_admin_persists_folders_and_rejects_invalid_tree(self):
+        data = self.admin_config()[2]
+        config = data['config']
+        config['folders'] = [
+            {'id': 'examples', 'name': '示例'},
+            {'id': 'hello', 'name': '问候', 'parent_id': 'examples'},
+            {'id': 'empty', 'name': '空目录'},
+        ]
+        config['routes'][0]['folder_id'] = 'hello'
+        status, _, saved = self.save_config(config, data['revision'])
+        self.assertEqual(status, 200)
+        self.assertEqual(self.reload()[0], 200)
+        self.assertEqual(self.admin_config()[2]['config'], config)
+        self.assertEqual(self.request('POST', '/hello/test', {})[0], 200)
+
+        invalid = copy.deepcopy(config)
+        invalid['folders'][0]['parent_id'] = 'hello'
+        status, _, rejected = self.save_config(invalid, saved['revision'])
+        self.assertEqual((status, rejected['reason']), (400, 'FolderCycle'))
+        invalid = copy.deepcopy(config)
+        invalid['routes'][0]['folder_id'] = 'missing'
+        status, _, rejected = self.save_config(invalid, saved['revision'])
+        self.assertEqual((status, rejected['reason']), (400, 'UnknownRouteFolder'))
+        self.assertEqual(json.loads(self.config_path.read_text(encoding='utf-8')), config)
+
     def test_admin_conflicts_and_invalid_save_preserve_disk_and_memory(self):
         original = self.config_path.read_bytes()
         data = self.admin_config()[2]

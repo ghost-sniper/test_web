@@ -1,0 +1,152 @@
+/* Palette tokens shared by the workbench, sidebar, and dialogs. */
+:root {
+  --scheme: light;
+  --paper: #f3f6f4;
+  --surface: #ffffff;
+  --field: #fafcfb;
+  --ink: #22343a;
+  --muted: #576d70;
+  --line: #d7e3de;
+  --accent: #116b57;
+  --on-accent: #ffffff;
+  --sidebar: #17232b;
+  --side-ink: #eef5f2;
+  --side-muted: #a8babd;
+  --side-accent: #c3ed9f;
+  --brand-ink: #192a1c;
+  --success: #196647;
+  --info: #325f91;
+  --danger: #9a3d40;
+  --warning: #76510d;
+  --workspace-decoration: none;
+
+  --focus: var(--accent);
+  --accent-hover: color-mix(in srgb, var(--accent) 88%, var(--ink));
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  --accent-line: color-mix(in srgb, var(--accent) 30%, var(--surface));
+  --surface-alt: color-mix(in srgb, var(--ink) 5%, var(--surface));
+  --code-bg: color-mix(in srgb, var(--accent) 4%, var(--field));
+  --code-ink: color-mix(in srgb, var(--accent) 45%, var(--ink));
+  --side-line: color-mix(in srgb, var(--side-ink) 18%, var(--sidebar));
+  --side-raised: color-mix(in srgb, var(--side-ink) 9%, var(--sidebar));
+  --side-input: color-mix(in srgb, var(--sidebar) 78%, black);
+  --side-selected: color-mix(in srgb, var(--side-accent) 15%, var(--sidebar));
+  --side-success: #a8e0b9;
+  --side-info: #afd2f7;
+  --side-danger: #f7b4b4;
+  --side-warning: #f2d28d;
+  --side-success-bg: color-mix(in srgb, var(--side-success) 12%, var(--sidebar));
+  --side-info-bg: color-mix(in srgb, var(--side-info) 12%, var(--sidebar));
+  --side-danger-bg: color-mix(in srgb, var(--side-danger) 12%, var(--sidebar));
+  --side-warning-bg: color-mix(in srgb, var(--side-warning) 12%, var(--sidebar));
+  --success-bg: color-mix(in srgb, var(--success) 10%, var(--surface));
+  --success-line: color-mix(in srgb, var(--success) 26%, var(--surface));
+  --info-bg: color-mix(in srgb, var(--info) 12%, var(--surface));
+  --danger-bg: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  --danger-line: color-mix(in srgb, var(--danger) 26%, var(--surface));
+  --warning-bg: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  --send-bg: var(--accent);
+  --send-ink: var(--on-accent);
+  --send-running: color-mix(in srgb, var(--accent) 70%, var(--ink));
+  --panel-shadow: #0000000c;
+  --dialog-shadow: #00000055;
+  --backdrop: #0c171b80;
+  --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}
+
+:root:is([data-theme="dark"], [data-theme="cyberpunk"], [data-theme="eva"], [data-theme="death-stranding"], [data-theme="wukong"]) {
+  --scheme: dark;
+  --success: #9fe0b0;
+  --info: #a3cbf7;
+  --danger: #ffb5ae;
+  --warning: #f0cf8d;
+  --panel-shadow: #00000028;
+  --backdrop: #060810a8;
+}
+
+:root[data-theme="dark"] {
+  --paper: #10171a;
+  --surface: #192226;
+  --field: #131c20;
+  --ink: #e7eff0;
+  --muted: #a7b8bc;
+  --line: #35464b;
+  --accent: #85dbc1;
+  --on-accent: #09261e;
+  --sidebar: #121c20;
+  --side-accent: #85dbc1;
+  --brand-ink: #102921;
+}
+
+:root[data-theme="cyberpunk"] {
+  --paper: #131316;
+  --surface: #1d1d22;
+  --field: #14151a;
+  --ink: #f6f4e9;
+  --muted: #bdbcc1;
+  --line: #46453e;
+  --accent: #f8ed48;
+  --on-accent: #201a06;
+  --sidebar: #101216;
+  --side-ink: #fcf8d7;
+  --side-muted: #aebbc2;
+  --side-accent: #f8ed48;
+  --brand-ink: #211d02;
+  --focus: #72e8ee;
+  --workspace-decoration: linear-gradient(110deg, #ede04014, transparent 38%),
+    repeating-linear-gradient(90deg, #76e9f00c 0 1px, transparent 1px 46px);
+}
+
+:root[data-theme="eva"] {
+  --paper: #1c172b;
+  --surface: #29203a;
+  --field: #21192e;
+  --ink: #f1eaf9;
+  --muted: #c8b9d7;
+  --line: #4b3c61;
+  --accent: #bbef77;
+  --on-accent: #1d2913;
+  --sidebar: #231832;
+  --side-ink: #f6eaff;
+  --side-muted: #c5b3d6;
+  --side-accent: #bbef77;
+  --brand-ink: #202718;
+  --workspace-decoration: radial-gradient(ellipse at top right, #9962db35, transparent 58%),
+    repeating-linear-gradient(135deg, #bcee7710 0 1px, transparent 1px 36px);
+}
+
+:root[data-theme="death-stranding"] {
+  --paper: #121e29;
+  --surface: #1b2935;
+  --field: #15232e;
+  --ink: #ecf0f1;
+  --muted: #aec3d0;
+  --line: #3c5161;
+  --accent: #f0c285;
+  --on-accent: #2d210f;
+  --sidebar: #12202b;
+  --side-ink: #e8f1f4;
+  --side-muted: #aec4d0;
+  --side-accent: #f0c285;
+  --brand-ink: #2b2115;
+  --workspace-decoration: radial-gradient(ellipse at top right, #6193a934, transparent 63%),
+    repeating-radial-gradient(ellipse at 110% -8%, #8ab6d019 0 1px, transparent 2px 31px);
+}
+
+:root[data-theme="wukong"] {
+  --paper: #1a1715;
+  --surface: #26211e;
+  --field: #201c19;
+  --ink: #f2eadd;
+  --muted: #c6b7a5;
+  --line: #51443a;
+  --accent: #e2b97b;
+  --on-accent: #2d2116;
+  --sidebar: #211b18;
+  --side-ink: #f4e8d4;
+  --side-muted: #c5b29c;
+  --side-accent: #e2b97b;
+  --brand-ink: #34251a;
+  --workspace-decoration: radial-gradient(ellipse at top right, #b78d5928, transparent 62%),
+    radial-gradient(ellipse at 0% 55%, #883d2b26, transparent 58%);
+}

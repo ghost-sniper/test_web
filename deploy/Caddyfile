@@ -1,7 +1,7 @@
 # Replace with your domain and merge into your existing Caddy configuration.
 mock.example.com {
-    @admin path /admin /admin/*
-    handle @admin {
+    @console path /admin /admin/* /viewer /viewer/*
+    handle @console {
         respond "Not found" 404
     }
     handle {

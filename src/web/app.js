@@ -6,8 +6,66 @@ const pretty = value => MockJSON.stringify(value);
 const clone = value => MockJSON.parse(pretty(value));
 const currentRoute = () => state.config?.routes[state.route];
 const currentRule = () => currentRoute()?.rules[state.rule];
-const editorIds = ['routeMethod', 'routePath', 'routeRateLimit', 'routeClientLimits', 'trustedProxyIps', 'requestSpec', 'ruleId', 'priority', 'matchBody', 'matchQuery', 'matchHeaders', 'status', 'delay', 'template', 'responseBody', 'responseHeaders'];
+const editorIds = ['routeMethod', 'routePath', 'routeFolder', 'routeRateLimit', 'routeClientLimits', 'trustedProxyIps', 'requestSpec', 'ruleId', 'priority', 'matchBody', 'matchQuery', 'matchHeaders', 'status', 'delay', 'template', 'responseBody', 'responseHeaders'];
 const maxRequestsPerSecond = 10000;
+const collapsedFolders = new Set();
+let editingFolderId = null;
+const narrowSidebar = window.matchMedia('(max-width: 650px)');
+let desktopSidebarCollapsed = false;
+let sidebarDrawerOpen = false;
+
+function syncSidebar() {
+  const sidebar = $('collectionSidebar');
+  const toggle = $('sidebarToggle');
+  const hadFocus = sidebar.contains(document.activeElement);
+  const overlay = narrowSidebar.matches && sidebarDrawerOpen;
+  const expanded = narrowSidebar.matches ? overlay : !desktopSidebarCollapsed;
+  sidebar.hidden = !expanded;
+  if (overlay) {
+    sidebar.setAttribute('role', 'dialog');
+    sidebar.setAttribute('aria-modal', 'true');
+  } else {
+    sidebar.removeAttribute('role');
+    sidebar.removeAttribute('aria-modal');
+  }
+  $('workspaceMain').inert = overlay;
+  $('sidebarBackdrop').hidden = !overlay;
+  document.body.classList.toggle('sidebar-collapsed', !expanded);
+  document.body.classList.toggle('sidebar-drawer-open', overlay);
+  toggle.setAttribute('aria-expanded', String(expanded));
+  const label = expanded ? '折叠接口侧栏' : '展开接口侧栏';
+  toggle.setAttribute('aria-label', label);
+  toggle.title = label;
+  if (!expanded && hadFocus) toggle.focus();
+}
+function closeSidebarDrawer() {
+  if (!sidebarDrawerOpen) return;
+  sidebarDrawerOpen = false;
+  syncSidebar();
+  $('sidebarToggle').focus();
+}
+$('sidebarToggle').onclick = () => {
+  if (narrowSidebar.matches) {
+    sidebarDrawerOpen = true;
+    syncSidebar();
+    $('sidebarClose').focus();
+  } else {
+    desktopSidebarCollapsed = !desktopSidebarCollapsed;
+    syncSidebar();
+  }
+};
+$('sidebarClose').onclick = closeSidebarDrawer;
+$('sidebarBackdrop').onclick = closeSidebarDrawer;
+narrowSidebar.addEventListener('change', () => {
+  sidebarDrawerOpen = false;
+  syncSidebar();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && sidebarDrawerOpen && !document.querySelector('dialog[open]')) {
+    event.preventDefault();
+    closeSidebarDrawer();
+  }
+});
 
 function notice(message, error = false) {
   $('notice').textContent = message;
@@ -17,13 +75,14 @@ function notice(message, error = false) {
 function markDirty() {
   state.dirty = true;
   $('dirtyLabel').hidden = false;
+  $('emptySave').hidden = false;
   $('testHint').textContent = '有未保存修改：测试仍使用服务器上已保存的规则。';
 }
 function setBusy(busy) {
   state.busy = busy;
   $('workbench').inert = busy;
   $('routeList').inert = busy;
-  for (const id of ['addRoute', 'refresh', 'reload']) $(id).disabled = busy || !state.config;
+  for (const id of ['addRoute', 'addFolder', 'emptySave', 'refresh', 'reload']) $(id).disabled = busy || !state.config;
   $('save').textContent = busy ? '正在保存…' : '保存并生效 ↗';
 }
 function confirmAction(title, message, action = '确认') {
@@ -63,6 +122,7 @@ function acceptConfig(data, selectedPath = null, selectedRule = null) {
   state.route = selected >= 0 ? selected : (state.config.routes.length ? 0 : -1);
   state.rule = 0;
   if (selectedRule && currentRoute()) state.rule = Math.max(0, currentRoute().rules.findIndex(rule => rule.id === selectedRule));
+  expandFolderPath(currentRoute()?.folder_id);
   $('connectionState').textContent = '服务已连接';
   $('connectionDot').classList.add('connected');
   $('sessionButton').textContent = '断开连接';
@@ -70,41 +130,167 @@ function acceptConfig(data, selectedPath = null, selectedRule = null) {
   $('emptyAction').textContent = '＋ 新建接口';
   render();
 }
+function folderMap(folders = state.config?.folders ?? []) {
+  return new Map(folders.map(folder => [folder.id, folder]));
+}
+function folderTrail(id, folders) {
+  const trail = [];
+  for (let folder = folders.get(id); folder; folder = folders.get(folder.parent_id)) {
+    trail.unshift(folder);
+  }
+  return trail;
+}
+function folderPath(id, folders) {
+  return folderTrail(id, folders).map(folder => folder.name).join(' / ');
+}
+function expandFolderPath(id) {
+  for (const folder of folderTrail(id, folderMap())) collapsedFolders.delete(folder.id);
+}
+function fillFolderSelect(select, selected, folders = folderMap(), excluded = new Set()) {
+  select.replaceChildren(new Option('根目录', ''));
+  for (const folder of folders.values()) {
+    if (!excluded.has(folder.id)) select.add(new Option(folderPath(folder.id, folders), folder.id));
+  }
+  select.value = selected ?? '';
+}
+function routeItem(route, index, breadcrumb = '') {
+  const item = document.createElement('li');
+  item.className = 'route-entry';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `route-item${state.route === index ? ' active' : ''}`;
+  button.setAttribute('aria-current', state.route === index ? 'true' : 'false');
+  const badge = document.createElement('span');
+  badge.className = `method ${route.method.toLowerCase()}`;
+  badge.textContent = route.method;
+  const label = document.createElement('span');
+  label.className = 'route-label';
+  const path = document.createElement('span');
+  path.className = 'path';
+  path.textContent = route.path;
+  label.append(path);
+  if (breadcrumb) {
+    const location = document.createElement('small');
+    location.textContent = breadcrumb;
+    label.append(location);
+  }
+  button.title = `${route.method} ${route.path}${breadcrumb ? ` · ${breadcrumb}` : ''}`;
+  button.append(badge, label);
+  button.onclick = () => editAction(() => {
+    collectRoute();
+    state.route = index;
+    state.rule = 0;
+    expandFolderPath(currentRoute().folder_id);
+    render();
+    closeSidebarDrawer();
+  });
+  const move = document.createElement('button');
+  move.type = 'button';
+  move.className = 'route-move';
+  move.textContent = '移动';
+  move.setAttribute('aria-label', `移动接口 ${route.method} ${route.path}`);
+  move.disabled = !state.config.folders?.length;
+  move.title = move.disabled ? '请先新建目录' : '移动到目录';
+  move.onclick = () => openRouteMove(index);
+  item.append(button, move);
+  return item;
+}
+function renderTree(parent, groups) {
+  const list = document.createElement('ul');
+  list.className = 'collection-list';
+  const group = groups.get(parent);
+  if (!group) return list;
+  for (const folder of group.folders) {
+    const item = document.createElement('li');
+    item.className = 'folder-item';
+    const details = document.createElement('details');
+    details.open = !collapsedFolders.has(folder.id);
+    details.ontoggle = () => {
+      if (!details.isConnected) return;
+      if (details.open) collapsedFolders.delete(folder.id);
+      else collapsedFolders.add(folder.id);
+    };
+    const summary = document.createElement('summary');
+    summary.textContent = folder.name;
+    summary.title = folder.name;
+    const children = renderTree(folder.id, groups);
+    children.classList.add('folder-children');
+    if (!children.children.length) {
+      const empty = document.createElement('li');
+      empty.className = 'folder-empty';
+      empty.textContent = '空目录';
+      children.append(empty);
+    }
+    details.append(summary, children);
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'folder-edit';
+    edit.textContent = '⋯';
+    edit.setAttribute('aria-label', `管理目录 ${folder.name}`);
+    edit.onclick = () => openFolderEditor(folder.id);
+    item.append(details, edit);
+    list.append(item);
+  }
+  for (const { route, index } of group.routes) list.append(routeItem(route, index));
+  return list;
+}
+function urlSearch(input) {
+  if (/^https?:\/\//i.test(input)) {
+    try {
+      const path = new URL(input).pathname.toLowerCase();
+      return route => route.path.toLowerCase() === path;
+    } catch {
+      return () => false;
+    }
+  }
+  const part = input.split(/[?#]/, 1)[0].toLowerCase();
+  return route => part.length > 0 && route.path.toLowerCase().includes(part);
+}
 function renderList() {
-  const list = $('routeList');
-  list.replaceChildren();
-  const query = $('search').value.trim().toLowerCase();
-  $('routeCount').textContent = state.config?.routes.length || 0;
-  for (const [index, route] of (state.config?.routes || []).entries()) {
-    if (!`${route.method} ${route.path}`.toLowerCase().includes(query)) continue;
-    const button = document.createElement('button');
-    button.className = `route-item${state.route === index ? ' active' : ''}`;
-    button.setAttribute('aria-current', state.route === index ? 'true' : 'false');
-    const badge = document.createElement('span');
-    badge.className = `method ${route.method.toLowerCase()}`;
-    badge.textContent = route.method;
-    const path = document.createElement('span');
-    path.className = 'path'; path.textContent = route.path;
-    button.title = `${route.method} ${route.path}`;
-    button.append(badge, path);
-    button.onclick = () => editAction(() => { collectRoute(); state.route = index; state.rule = 0; render(); });
-    list.append(button);
+  const nav = $('routeList');
+  const query = $('search').value.trim();
+  const routes = state.config?.routes ?? [];
+  const folders = folderMap();
+  $('routeCount').textContent = routes.length;
+  let list;
+  if (query && state.config) {
+    const matches = urlSearch(query);
+    list = document.createElement('ul');
+    list.className = 'collection-list';
+    routes.forEach((route, index) => {
+      if (matches(route)) list.append(routeItem(route, index, folderPath(route.folder_id, folders) || '根目录'));
+    });
+    $('routeCount').textContent = `${list.children.length} / ${routes.length}`;
+  } else {
+    const groups = new Map();
+    function group(id) {
+      if (!groups.has(id)) groups.set(id, { folders: [], routes: [] });
+      return groups.get(id);
+    }
+    for (const folder of folders.values()) group(folder.parent_id ?? null).folders.push(folder);
+    routes.forEach((route, index) => group(route.folder_id ?? null).routes.push({ route, index }));
+    list = renderTree(null, groups);
   }
-  if (!list.children.length) {
-    const empty = document.createElement('p'); empty.className = 'sidebar-empty';
-    empty.textContent = state.config ? '没有匹配的接口，试试新建一个。' : '连接服务后查看接口';
-    list.append(empty);
+  if (list.children.length) {
+    nav.replaceChildren(list);
+    return;
   }
+  const empty = document.createElement('p');
+  empty.className = 'sidebar-empty';
+  empty.textContent = !state.config ? '连接服务后查看接口' : query ? '没有 URL 匹配的接口。' : '接口集合为空。';
+  nav.replaceChildren(empty);
 }
 function render() {
   renderList();
-  for (const id of ['addRoute', 'refresh', 'reload']) $(id).disabled = !state.config || state.busy;
+  for (const id of ['addRoute', 'addFolder', 'emptySave', 'refresh', 'reload']) $(id).disabled = !state.config || state.busy;
   const route = currentRoute();
   $('workbench').hidden = !route;
   $('emptyState').hidden = !!route;
+  $('emptySave').hidden = !state.config || !state.dirty;
   if (!route) return;
   $('routeMethod').value = route.method;
   $('routePath').value = route.path;
+  fillFolderSelect($('routeFolder'), route.folder_id);
   const policy = route.rate_limit;
   const defaultLimit = policy?.requests_per_second ?? 0;
   const clients = policy?.clients ?? [];
@@ -174,6 +360,9 @@ function collectRoute() {
   const next = clone(route);
   next.method = $('routeMethod').value;
   next.path = $('routePath').value.trim();
+  const folderId = $('routeFolder').value;
+  if (folderId) next.folder_id = folderId;
+  else delete next.folder_id;
   if (!/^\/(?!\/)/.test(next.path) || /[\s?#\\]/.test(next.path)) throw new Error('接口路径需以 / 开头，不能包含空白、反斜线或查询参数。');
   if (next.path === '/admin' || next.path.startsWith('/admin/') || next.path === '/healthz') throw new Error('该路径由管理服务保留，请换一个路径。');
   if (state.config.routes.some((other, i) => i !== state.route && other.method === next.method && other.path === next.path)) throw new Error('同一方法和路径的接口已存在。');
@@ -209,15 +398,113 @@ function editAction(action) {
   if (state.busy) return;
   try { action(); } catch (error) { notice(error.message, true); }
 }
+function openRouteMove(index) {
+  editAction(() => {
+    collectRoute();
+    const route = state.config.routes[index];
+    const dialog = $('routeMoveDialog');
+    const target = $('routeMoveTarget');
+    $('routeMoveLabel').textContent = `${route.method} ${route.path}`;
+    fillFolderSelect(target, route.folder_id);
+    $('routeMoveForm').onsubmit = event => {
+      event.preventDefault();
+      const folderId = target.value;
+      dialog.close();
+      if (folderId === (route.folder_id ?? '')) return;
+      if (folderId) route.folder_id = folderId;
+      else delete route.folder_id;
+      if (index === state.route) $('routeFolder').value = folderId;
+      expandFolderPath(folderId);
+      markDirty();
+      renderList();
+      notice('接口位置已更新。点击「保存并生效」写入配置。');
+    };
+    dialog.showModal();
+  });
+}
+$('routeMoveCancel').onclick = () => $('routeMoveDialog').close();
 function newRule(id) { return { id, priority: 0, response: { status: 200, body: { code: 200, message: 'ok' }, delay_ms: 0 } }; }
 function uniqueId(base, existing) { let id = base, i = 2; while (existing.includes(id)) id = `${base}-${i++}`; return id; }
+function folderHasContents(id) {
+  return (state.config.folders ?? []).some(folder => folder.parent_id === id) ||
+    state.config.routes.some(route => route.folder_id === id);
+}
+function openFolderEditor(id = null) {
+  editAction(() => {
+    collectRoute();
+    editingFolderId = id;
+    const folders = folderMap();
+    const folder = folders.get(id);
+    const excluded = new Set();
+    if (folder) {
+      for (const candidate of folders.values()) {
+        if (folderTrail(candidate.id, folders).some(ancestor => ancestor.id === id)) excluded.add(candidate.id);
+      }
+    }
+    $('folderTitle').textContent = folder ? '管理目录' : '新建目录';
+    $('folderName').value = folder?.name ?? '';
+    fillFolderSelect($('folderParent'), folder?.parent_id, folders, excluded);
+    $('folderDelete').hidden = !folder;
+    $('folderDelete').disabled = !!folder && folderHasContents(id);
+    $('folderDeleteHint').hidden = !$('folderDelete').disabled;
+    $('folderError').hidden = true;
+    $('folderDialog').showModal();
+  });
+}
+function updateFolderDraft(folders, visibleFolderId) {
+  if (folders.length) state.config.folders = folders;
+  else delete state.config.folders;
+  expandFolderPath(visibleFolderId);
+  $('search').value = '';
+  $('folderDialog').close();
+  markDirty();
+  renderList();
+  if (currentRoute()) fillFolderSelect($('routeFolder'), currentRoute().folder_id);
+  notice('目录修改已加入草稿。点击「保存并生效」写入配置。');
+}
+$('folderForm').onsubmit = event => {
+  event.preventDefault();
+  const name = $('folderName').value.trim();
+  const parentId = $('folderParent').value || null;
+  const folders = state.config.folders ?? [];
+  const id = editingFolderId ?? uniqueId('folder', folders.map(folder => folder.id));
+  try {
+    if (!name || /[\/\\\r\n]/.test(name)) throw new Error('请输入目录名称，名称不能包含斜杠或换行。');
+    if (folders.some(folder => folder.id !== id && (folder.parent_id ?? null) === parentId && folder.name === name)) {
+      throw new Error('同一上级目录下已存在同名目录。');
+    }
+    const next = folders.slice();
+    const index = next.findIndex(folder => folder.id === id);
+    const folder = { id, name, parent_id: parentId };
+    if (index < 0) next.push(folder);
+    else next[index] = folder;
+    const byId = folderMap(next);
+    if (next.some(entry => folderTrail(entry.id, byId).length > 16)) throw new Error('目录最多支持 16 层。');
+    updateFolderDraft(next, id);
+  } catch (error) {
+    $('folderError').textContent = error.message;
+    $('folderError').hidden = false;
+  }
+};
+$('folderCancel').onclick = () => $('folderDialog').close();
+$('folderDelete').onclick = () => {
+  if (!editingFolderId || folderHasContents(editingFolderId)) return;
+  const folders = state.config.folders;
+  const parent = folders.find(folder => folder.id === editingFolderId)?.parent_id;
+  collapsedFolders.delete(editingFolderId);
+  updateFolderDraft(folders.filter(folder => folder.id !== editingFolderId), parent);
+};
 function addRoute() {
   if (!state.config) return $('loginDialog').showModal();
   editAction(() => {
     collectRoute();
     state.config.routes.push({ method: 'GET', path: uniqueId('/api/example', state.config.routes.map(r => r.path)), rules: [newRule('success')] });
     state.route = state.config.routes.length - 1; state.rule = 0; $('search').value = '';
-    markDirty(); render(); $('routePath').focus(); $('routePath').select();
+    markDirty();
+    render();
+    closeSidebarDrawer();
+    $('routePath').focus();
+    $('routePath').select();
   });
 }
 function fillExample() {
@@ -263,7 +550,9 @@ async function sendRequest() {
     if (!input.startsWith('/') || input.startsWith('//') || /[\\\r\n]/.test(input)) throw new Error('只能测试当前服务的相对路径，例如 /order。');
     url = new URL(input, location.origin);
     const decoded = decodeURIComponent(url.pathname).replace(/\\/g, '/');
-    if (url.origin !== location.origin || decoded === '/admin' || decoded.startsWith('/admin/')) throw new Error('测试面板只能调用当前服务的业务接口，不能调用管理接口。');
+    if (url.origin !== location.origin || ['/admin', '/viewer'].some(path => decoded === path || decoded.startsWith(path + '/'))) {
+      throw new Error('测试面板只能调用当前服务的 Mock 接口。');
+    }
     headers = new Headers();
     for (const pair of pairs('testHeaders', '测试请求头')) headers.set(pair.name, pair.value);
   } catch (error) { notice(error.message, true); return; }
@@ -317,12 +606,14 @@ $('sessionButton').onclick = async () => {
   if (state.busy) return;
   if (state.dirty && !await confirmAction('断开服务连接？', '当前未保存的修改将丢失。', '断开连接')) return;
   state.controller?.abort(); state.token = ''; state.config = null; state.route = -1; state.dirty = false;
+  collapsedFolders.clear();
+  $('search').value = '';
   $('connectionState').textContent = '未连接'; $('sessionButton').textContent = '连接服务';
   $('revisionLabel').textContent = '尚未连接'; $('emptyAction').textContent = '连接服务';
   $('resultBody').textContent = ''; $('resultHeaders').textContent = ''; $('notice').hidden = true;
   render();
 };
-$('save').onclick = async () => {
+async function saveConfig() {
   if (state.busy) return;
   try {
     collectRoute();
@@ -333,7 +624,9 @@ $('save').onclick = async () => {
     acceptConfig(data, selected, selectedRule);
     notice('已保存，配置立即生效。现在可以发送请求验证结果。');
   } catch (error) { notice(error.message, true); } finally { setBusy(false); }
-};
+}
+$('save').onclick = saveConfig;
+$('emptySave').onclick = saveConfig;
 $('refresh').onclick = async () => {
   if (state.busy) return;
   if (state.dirty && !await confirmAction('刷新服务器配置？', '这会放弃所有未保存的修改，并读取服务器当前配置。', '放弃修改并刷新')) return;
@@ -348,6 +641,7 @@ $('reload').onclick = async () => {
   catch (error) { notice(error.message, true); } finally { setBusy(false); }
 };
 $('addRoute').onclick = addRoute;
+$('addFolder').onclick = () => openFolderEditor();
 $('emptyAction').onclick = addRoute;
 $('search').oninput = renderList;
 $('addRule').onclick = () => editAction(() => {
@@ -392,5 +686,6 @@ $('copyResult').onclick = async () => {
 };
 for (const id of editorIds) $(id).addEventListener('input', () => { markDirty(); $('templateHint').hidden = !$('template').checked; });
 window.addEventListener('beforeunload', event => { if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
+syncSidebar();
 render();
 $('loginDialog').showModal();
