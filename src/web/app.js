@@ -6,7 +6,7 @@ const pretty = value => MockJSON.stringify(value);
 const clone = value => MockJSON.parse(pretty(value));
 const currentRoute = () => state.config?.routes[state.route];
 const currentRule = () => currentRoute()?.rules[state.rule];
-const editorIds = ['routeMethod', 'routePath', 'routeFolder', 'routeRateLimit', 'routeClientLimits', 'trustedProxyIps', 'requestSpec', 'ruleId', 'priority', 'matchBody', 'matchQuery', 'matchHeaders', 'status', 'delay', 'template', 'responseBody', 'responseHeaders'];
+const editorIds = ['routeMethod', 'routePath', 'routeFolder', 'routeRateLimit', 'routeClientLimits', 'trustedProxyIps', 'requestFormat', 'xmlBodyRequired', 'requestSpec', 'ruleId', 'priority', 'matchBody', 'matchPath', 'matchQuery', 'matchHeaders', 'status', 'delay', 'responseFormat', 'template', 'responseBody', 'responseHeaders'];
 const maxRequestsPerSecond = 10000;
 const collapsedFolders = new Set();
 let editingFolderId = null;
@@ -301,7 +301,10 @@ function render() {
   $('endpointPath').textContent = route.path;
   $('methodBadge').textContent = route.method;
   $('methodBadge').className = `method ${route.method.toLowerCase()}`;
-  $('requestSpec').value = pretty(route.request || { body_required: false, fields: [] });
+  const { format = 'json', ...requestSpec } = route.request ?? { body_required: false, fields: [] };
+  $('requestFormat').value = format;
+  $('xmlBodyRequired').checked = !!requestSpec.body_required;
+  $('requestSpec').value = pretty(requestSpec);
   $('dirtyLabel').hidden = !state.dirty;
   $('ruleCount').textContent = route.rules.length;
   $('ruleList').replaceChildren();
@@ -319,17 +322,37 @@ function render() {
   $('priority').value = rule.priority || 0;
   $('status').value = rule.response.status ?? 200;
   $('delay').value = rule.response.delay_ms || 0;
+  const responseFormat = rule.response.format ?? 'json';
+  $('responseFormat').value = responseFormat;
   $('template').checked = !!rule.response.template;
-  $('templateHint').hidden = !rule.response.template;
-  $('responseBody').value = pretty(rule.response.body);
+  $('responseBody').value = responseFormat === 'xml' ? rule.response.body ?? '' : pretty(rule.response.body);
   $('responseHeaders').value = pretty(fromPairs(rule.response.headers));
-  $('matchBody').value = pretty(rule.match?.body ?? null);
+  const matchBody = rule.match?.body ?? null;
+  $('matchBody').value = typeof matchBody === 'string' ? matchBody : (format === 'xml' && matchBody === null ? '' : pretty(matchBody));
+  $('matchPath').value = pretty(fromPairs(rule.match?.path));
   $('matchQuery').value = pretty(fromPairs(rule.match?.query));
   $('matchHeaders').value = pretty(fromPairs(rule.match?.headers));
-  $('matchDetails').open = !!(rule.match?.body || rule.match?.query?.length || rule.match?.headers?.length);
+  $('matchDetails').open = !!(rule.match?.body || rule.match?.path?.length || rule.match?.query?.length || rule.match?.headers?.length);
   $('deleteRule').disabled = route.rules.length === 1;
   $('deleteRule').title = route.rules.length === 1 ? '每个接口至少保留一个场景；也可删除整个接口' : '删除当前场景';
+  updateBodyEditors();
   fillExample();
+}
+function updateBodyEditors() {
+  const xmlRequest = $('requestFormat').value === 'xml';
+  const xmlResponse = $('responseFormat').value === 'xml';
+  $('jsonRequestFields').hidden = xmlRequest;
+  $('xmlRequestOptions').hidden = !xmlRequest;
+  $('matchBodyLabel').textContent = xmlRequest ? 'XML 请求体全文匹配（留空表示不限）' : 'JSON 请求体子集（null 表示不限）';
+  $('matchBody').placeholder = xmlRequest ? '<request />' : 'null';
+  $('responseBodyFormat').textContent = xmlResponse ? 'XML' : 'JSON';
+  const templateHint = $('templateHint');
+  templateHint.hidden = !$('template').checked;
+  templateHint.textContent = (xmlRequest
+    ? '支持 {{body.name}}、{{body.customer.name}}、{{body.@id}} 和 {{body.age|add:1}}。'
+    : '支持 {{body.name}} 和 {{body.age|add:1}}，JSON 字段需声明为必填或有默认值。')
+    + (xmlResponse ? 'XML 占位符可写在元素文本或属性值中。' : '');
+  $('xmlResponseHint').hidden = !xmlResponse;
 }
 function fromPairs(pairs = []) { return Object.fromEntries(pairs.map(pair => [pair.name, pair.value])); }
 function parseJson(id, title, objectOnly = false) {
@@ -340,11 +363,44 @@ function parseJson(id, title, objectOnly = false) {
   }
   return value;
 }
+function readXml(id, title, optional = false) {
+  const value = $(id).value;
+  if (optional && !value.trim()) return null;
+  if (!value.trimStart().startsWith('<')) {
+    $(id).focus();
+    throw new Error(`${title}需要填写 XML 文档。`);
+  }
+  return value;
+}
 function pairs(id, title) {
   return Object.entries(parseJson(id, title, true)).map(([name, value]) => {
     if (!name || typeof value !== 'string') throw new Error(`${title}的名称不能为空，值必须是字符串。`);
     return { name, value };
   });
+}
+function pathParameterName(segment) {
+  return segment.startsWith('{') && segment.endsWith('}') ? segment.slice(1, -1) : null;
+}
+function queryPairs() {
+  const field = $('matchQuery');
+  const input = field.value.trim();
+  if (!input) return [];
+  if (input.startsWith('{')) return pairs('matchQuery', 'URL 查询参数');
+  try {
+    if (!/^(?:[?/]|https?:\/\/)/i.test(input)) throw new Error();
+    const url = new URL(input, location.origin);
+    if (!url.search) throw new Error();
+    decodeURIComponent(url.search);
+    const values = new Map();
+    for (const [name, value] of url.searchParams) {
+      if (!name) throw new Error();
+      if (!values.has(name)) values.set(name, value);
+    }
+    return Array.from(values, ([name, value]) => ({ name, value }));
+  } catch {
+    field.focus();
+    throw new Error('请填写有效的查询字符串（例如 ?scenario=error）、带查询参数的 URL 或 JSON 对象。');
+  }
 }
 function integer(id, title, min, max) {
   const value = Number($(id).value);
@@ -365,6 +421,10 @@ function collectRoute() {
   else delete next.folder_id;
   if (!/^\/(?!\/)/.test(next.path) || /[\s?#\\]/.test(next.path)) throw new Error('接口路径需以 / 开头，不能包含空白、反斜线或查询参数。');
   if (next.path === '/admin' || next.path.startsWith('/admin/') || next.path === '/healthz') throw new Error('该路径由管理服务保留，请换一个路径。');
+  const pathNames = next.path.split('/').map(pathParameterName).filter(name => name !== null);
+  if (pathNames.some(name => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) || new Set(pathNames).size !== pathNames.length) {
+    throw new Error('路径参数名称需以英文字母或下划线开头，仅包含英文字母、数字或下划线，且不能重复。');
+  }
   if (state.config.routes.some((other, i) => i !== state.route && other.method === next.method && other.path === next.path)) throw new Error('同一方法和路径的接口已存在。');
   const defaultLimit = integer('routeRateLimit', '每个客户端每秒上限', 0, maxRequestsPerSecond);
   const clients = Object.entries(parseJson('routeClientLimits', '客户端 IP 单独上限', true)).map(([ip, limit]) => {
@@ -377,17 +437,34 @@ function collectRoute() {
   if (defaultLimit || clients.length) next.rate_limit = { requests_per_second: defaultLimit, clients };
   else delete next.rate_limit;
   const trustedProxies = $('trustedProxyIps').value.split(',').map(ip => ip.trim()).filter(Boolean);
-  next.request = parseJson('requestSpec', '请求配置', true);
+  const requestFormat = $('requestFormat').value;
+  next.request = requestFormat === 'xml'
+    ? { format: 'xml', body_required: $('xmlBodyRequired').checked }
+    : { ...parseJson('requestSpec', '请求配置', true), format: 'json' };
   const rule = next.rules[state.rule];
   rule.id = $('ruleId').value.trim();
   if (!rule.id || next.rules.some((r, i) => i !== state.rule && r.id === rule.id)) throw new Error('场景 ID 不能为空，也不能与当前接口的其他场景重复。');
   rule.priority = integer('priority', '优先级', -2147483648, 2147483647);
-  const bodyMatch = parseJson('matchBody', '请求体匹配条件');
-  if (bodyMatch !== null && (typeof bodyMatch !== 'object' || Array.isArray(bodyMatch) || MockJSON.isNumber(bodyMatch))) throw new Error('请求体匹配条件需为 JSON 对象，或用 null 表示不限。');
-  rule.match = { body: bodyMatch, query: pairs('matchQuery', '查询参数'), headers: pairs('matchHeaders', '请求头匹配条件') };
+  const bodyMatch = requestFormat === 'xml'
+    ? readXml('matchBody', '请求体匹配条件', true)
+    : parseJson('matchBody', '请求体匹配条件');
+  if (requestFormat === 'json' && bodyMatch !== null && (typeof bodyMatch !== 'object' || Array.isArray(bodyMatch) || MockJSON.isNumber(bodyMatch))) throw new Error('请求体匹配条件需为 JSON 对象，或用 null 表示不限。');
+  const pathMatch = $('matchPath').value.trim() ? pairs('matchPath', 'URL 路径参数') : [];
+  for (const { name, value } of pathMatch) {
+    if (!pathNames.includes(name) || !value) {
+      $('matchPath').focus();
+      throw new Error(`路径参数 ${name} 必须在接口路径中声明，且匹配值不能为空。`);
+    }
+  }
+  rule.match = { body: bodyMatch, path: pathMatch, query: queryPairs(), headers: pairs('matchHeaders', '请求头匹配条件') };
+  const responseFormat = $('responseFormat').value;
+  const status = integer('status', '状态码', 200, 599);
+  const responseBody = responseFormat === 'xml'
+    ? readXml('responseBody', '响应体', [204, 205, 304].includes(status))
+    : parseJson('responseBody', '响应体');
   rule.response = {
-    ...rule.response, status: integer('status', '状态码', 200, 599), delay_ms: integer('delay', '延迟', 0, 30000),
-    template: $('template').checked, body: parseJson('responseBody', '响应体'), headers: pairs('responseHeaders', '响应头'),
+    ...rule.response, status, format: responseFormat, delay_ms: integer('delay', '延迟', 0, 30000),
+    template: $('template').checked, body: responseBody, headers: pairs('responseHeaders', '响应头'),
   };
   next.rules[state.rule] = rule;
   state.config.routes[state.route] = next;
@@ -517,15 +594,30 @@ function fillExample() {
   }
   $('testMethod').value = route.method;
   const query = new URLSearchParams((rule.match?.query || []).map(pair => [pair.name, pair.value]));
-  $('testPath').value = route.path + (query.size ? `?${query}` : '');
-  const body = Object.create(null);
-  for (const field of route.request?.fields || []) {
-    if (field.default != null) body[field.name] = field.default;
-    else if (field.required) body[field.name] = field.type === 'string' ? 'demo' : field.type === 'boolean' ? true : 1;
+  const pathValues = new Map((rule.match?.path ?? []).map(pair => [pair.name, pair.value]));
+  const path = route.path.split('/').map(segment => {
+    const name = pathParameterName(segment);
+    return name === null ? segment : encodeURIComponent(pathValues.get(name) ?? 'demo');
+  }).join('/');
+  $('testPath').value = path + (query.size ? `?${query}` : '');
+  const xmlRequest = route.request?.format === 'xml';
+  $('testBodyFormat').textContent = xmlRequest ? 'XML' : 'JSON';
+  if (xmlRequest) {
+    $('testBody').value = typeof rule.match?.body === 'string' ? rule.match.body : '<request />';
+  } else {
+    const body = Object.create(null);
+    for (const field of route.request?.fields || []) {
+      if (field.default != null) body[field.name] = field.default;
+      else if (field.required) body[field.name] = field.type === 'string' ? 'demo' : field.type === 'boolean' ? true : 1;
+    }
+    Object.assign(body, rule.match?.body || {});
+    $('testBody').value = pretty(body);
   }
-  Object.assign(body, rule.match?.body || {});
-  $('testBody').value = pretty(body);
-  $('testHeaders').value = pretty({ 'Content-Type': 'application/json', ...fromPairs(rule.match?.headers) });
+  const headers = fromPairs(rule.match?.headers);
+  if (!Object.keys(headers).some(name => name.toLowerCase() === 'content-type')) {
+    headers['Content-Type'] = xmlRequest ? 'application/xml' : 'application/json';
+  }
+  $('testHeaders').value = pretty(headers);
   updateTestMethod();
 }
 function updateTestMethod() {
@@ -684,7 +776,15 @@ $('copyResult').onclick = async () => {
   try { await navigator.clipboard.writeText(target.textContent); notice('响应内容已复制。'); }
   catch { const range = document.createRange(); range.selectNodeContents(target); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); notice('已选中响应内容，请按 Ctrl+C 复制。'); }
 };
-for (const id of editorIds) $(id).addEventListener('input', () => { markDirty(); $('templateHint').hidden = !$('template').checked; });
+for (const id of editorIds) $(id).addEventListener('input', markDirty);
+$('requestFormat').onchange = () => {
+  const match = $('matchBody');
+  if ($('requestFormat').value === 'xml' && match.value.trim() === 'null') match.value = '';
+  if ($('requestFormat').value === 'json' && !match.value.trim()) match.value = 'null';
+  updateBodyEditors();
+};
+$('responseFormat').onchange = updateBodyEditors;
+$('template').onchange = updateBodyEditors;
 window.addEventListener('beforeunload', event => { if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
 syncSidebar();
 render();

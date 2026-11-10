@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import unittest
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 EXE = Path(sys.argv.pop(1)).resolve() if len(sys.argv) > 1 else ROOT / "zig-out/bin" / ("test_web.exe" if os.name == "nt" else "test_web")
@@ -258,6 +259,112 @@ class MockServiceTests(MockServer):
         self.assertEqual(self.request("POST", "/hello/test", {"age": 9223372036854775807})[0], 400)
         self.assertEqual(self.request("GET", "/healthz")[0], 200)
 
+    def test_xml_request_matching_and_raw_responses(self):
+        pattern = '<order>\r\n<id>7</id>\r\n</order>'
+        reply = '<?xml version="1.0" encoding="UTF-8"?><accepted>收到 &amp; 确认</accepted>'
+        config = {'routes': [
+            {'method': 'POST', 'path': '/xml', 'request': {'format': 'xml', 'body_required': True}, 'rules': [
+                {'id': 'accepted', 'priority': 10, 'match': {
+                    'body': pattern, 'query': [{'name': 'mode', 'value': 'submit'}],
+                }, 'response': {'format': 'xml', 'status': 201, 'body': reply}},
+                {'id': 'fallback', 'response': {'body': {'matched': False}}},
+            ]},
+            {'method': 'POST', 'path': '/xml-output', 'rules': [
+                {'id': 'ok', 'match': {'body': {'valid': True}}, 'response': {
+                    'format': 'xml', 'body': '<ok/>',
+                    'headers': [{'name': 'Content-Type', 'value': 'application/soap+xml; charset=utf-8'}],
+                }},
+            ]},
+            {'method': 'GET', 'path': '/xml-empty', 'request': {'format': 'xml'}, 'rules': [
+                {'id': 'empty', 'response': {'format': 'xml', 'status': 204, 'body': None}},
+            ]},
+        ]}
+        revision = self.admin_config()[2]['revision']
+        self.assertEqual(self.save_config(config, revision)[0], 200)
+        payload = ('\ufeff ' + pattern.replace('\r\n', '\n') + '\n').encode('utf-8')
+        xml_headers = {'Content-Type': 'application/xml; charset=utf-8'}
+        status, headers, body = self.request('POST', '/xml?mode=submit', payload, xml_headers)
+        self.assertEqual((status, headers['content-type'], body), (201, 'application/xml; charset=utf-8', reply))
+        self.assertEqual(self.request('POST', '/xml', payload, xml_headers)[2], {'matched': False})
+        self.assertEqual(self.request('POST', '/xml?mode=submit', b'<order><id>7</id></order>', xml_headers)[2], {'matched': False})
+        for invalid in (None, b'{}', b'<order></wrong>', b'<order/><extra/>', b'<order>&missing;</order>',
+                        b'<order>\xff</order>', b'<!DOCTYPE order SYSTEM "file:///test"><order/>'):
+            self.assertEqual(self.request('POST', '/xml', invalid, xml_headers)[0], 400, invalid)
+        status, headers, body = self.request('POST', '/xml-output', {'valid': True})
+        self.assertEqual((status, headers['content-type'], body), (200, 'application/soap+xml; charset=utf-8', '<ok/>'))
+        self.assertEqual(self.request('GET', '/xml-empty')[::2], (204, None))
+        catalog = self.request('GET', '/viewer/api/catalog')[2]['catalog']['routes']
+        self.assertEqual(catalog[0]['request']['format'], 'xml')
+        self.assertEqual(catalog[0]['rules'][0]['response']['body'], reply)
+
+        for path, key, invalid in (
+            (('request',), 'fields', [{'name': 'id', 'type': 'integer'}]),
+            (('rules', 0, 'match'), 'body', {'id': 7}),
+            (('rules', 0, 'response'), 'body', '<unclosed>'),
+        ):
+            invalid_config = copy.deepcopy(config)
+            target = invalid_config['routes'][0]
+            for part in path:
+                target = target[part]
+            target[key] = invalid
+            self.assertEqual(self.save_config(invalid_config, self.admin_config()[2]['revision'])[0], 400)
+        self.assertEqual(self.reload()[0], 200)
+        self.assertEqual(self.request('POST', '/xml?mode=submit', payload, xml_headers)[::2], (201, reply))
+
+    def test_xml_templates_extract_and_escape_request_values(self):
+        template = ('<result id="{{body.@id}}"><name>{{body.name}}</name>'
+                    '<age>{{body.customer.age|add:1}}</age><text>{{body.customer}}</text>'
+                    '<code>{{body.m:code}}</code></result>')
+        config = {'routes': [
+            {'method': 'POST', 'path': '/xml-template', 'request': {'format': 'xml'}, 'rules': [
+                {'id': 'ok', 'response': {'format': 'xml', 'template': True, 'body': template}},
+            ]},
+            {'method': 'POST', 'path': '/xml-to-json', 'request': {'format': 'xml'}, 'rules': [
+                {'id': 'ok', 'response': {'template': True, 'body': {'age': '{{body.customer.age}}'}}},
+            ]},
+            {'method': 'POST', 'path': '/json-to-xml', 'request': {'fields': [
+                {'name': 'name', 'type': 'string', 'required': True},
+            ]}, 'rules': [
+                {'id': 'ok', 'response': {'format': 'xml', 'template': True, 'body': '<result>{{body.name}}</result>'}},
+            ]},
+        ]}
+        self.assertEqual(self.save_config(config, self.admin_config()[2]['revision'])[0], 200)
+        payload = (b'<request xmlns:m="urn:mock" id="A&quot;&amp;&#10;B">'
+                   b'<name>A &amp; <![CDATA[<B>]]></name><name>ignored</name>'
+                   b'<customer><age> 7 </age><age>99</age></customer>'
+                   b'<m:code>&#65;</m:code></request>')
+        status, headers, result = self.request('POST', '/xml-template', payload)
+        self.assertEqual((status, headers['content-type']), (200, 'application/xml; charset=utf-8'))
+        self.assertIn('A &amp; &lt;B&gt;', result)
+        root = ET.fromstring(result)
+        self.assertEqual(root.get('id'), 'A"&\nB')
+        self.assertEqual(root.findtext('name'), 'A & <B>')
+        self.assertEqual(root.findtext('age'), '8')
+        self.assertEqual(root.findtext('text'), ' 7 99')
+        self.assertEqual(root.findtext('code'), 'A')
+        for invalid in (None, b'<request/>', payload.replace(b' 7 ', b'not-an-integer'),
+                        payload.replace(b' 7 ', b'9223372036854775807')):
+            self.assertEqual(self.request('POST', '/xml-template', invalid)[0], 400)
+        self.assertEqual(self.request('POST', '/xml-to-json', payload)[2], {'age': ' 7 '})
+        injected = '<malicious/> & "text"'
+        result = self.request('POST', '/json-to-xml', {'name': injected})[2]
+        self.assertEqual(ET.fromstring(result).text, injected)
+        self.assertEqual(self.request('POST', '/json-to-xml', {'name': '\0'})[0], 400)
+
+        revision = self.admin_config()[2]['revision']
+        for invalid in (
+            '<result><!-- {{body.name}} --></result>',
+            '<result><![CDATA[{{body.name}}]]></result>',
+            '<?demo {{body.name}}?><result/>',
+            '<result xmlns="{{body.name}}"/>',
+            '<result>{{body.customer..age}}</result>',
+            '<result>{{body.name</result>',
+        ):
+            broken = copy.deepcopy(config)
+            broken['routes'][0]['rules'][0]['response']['body'] = invalid
+            self.assertEqual(self.save_config(broken, revision)[0], 400, invalid)
+        self.assertEqual(self.request('POST', '/xml-template', payload)[0], 200)
+
     def test_migrated_order(self):
         order = dict(product_name="test", product_id=1, order_id="o1", count=2, buyer_account="demo", pay_method="WeChat")
         self.assertEqual(self.request("POST", "/order", order)[2], {"code": 200, "message": "下单成功"})
@@ -342,6 +449,70 @@ class MockServiceTests(MockServer):
         config["routes"][-1]["rules"] = config["routes"][-1]["rules"][1:2]
         self.assertEqual(self.reload(config)[0], 200)
         self.assertEqual(self.request("POST", "/match", {})[0], 404)
+
+    def test_url_query_matching_decodes_names_and_values(self):
+        config = {"routes": [{"method": "GET", "path": "/query", "rules": [
+            {"id": "query", "priority": 1, "match": {"query": [
+                {"name": "状态", "value": "paid + shipped"},
+                {"name": "flag", "value": ""},
+            ]}, "response": {"body": "matched"}},
+            {"id": "fallback", "response": {"body": "fallback"}},
+        ]}]}
+        self.assertEqual(self.save_config(config, self.admin_config()[2]["revision"])[0], 200)
+        name = "%E7%8A%B6%E6%80%81"
+        target = f"{name}=paid+%2B+shipped"
+        for query in (f"flag=&{target}", f"{target}&flag&extra=1", f"{target}&{name}=other&flag"):
+            self.assertEqual(self.request("GET", f"/query?{query}")[2], "matched")
+        for query in (target, f"{target}&flag=no", f"{name}=other&{target}&flag"):
+            self.assertEqual(self.request("GET", f"/query?{query}")[2], "fallback")
+        self.assertEqual(self.request("GET", "/query?flag=%ZZ")[0], 400)
+
+    def test_url_path_templates_and_parameter_conditions(self):
+        def route(path, value):
+            return {"method": "GET", "path": path, "rules": [{"id": "fallback", "response": {"body": value}}]}
+
+        config = {"routes": [
+            route("/{collection}/{id}/items/{item}", "generic"),
+            route("/orders/{id}/items/{item}", "order-item"),
+            route("/orders/{id}", "order"),
+            route("/{collection}/42", "tie"),
+            route("/orders/latest", "latest"),
+        ]}
+        config["routes"][1]["rules"].append({
+            "id": "selected", "priority": 10,
+            "match": {
+                "path": [{"name": "id", "value": "a/b"}, {"name": "item", "value": "a+b"}],
+                "query": [{"name": "detail", "value": "yes"}],
+            },
+            "response": {"body": "selected"},
+        })
+        self.assertEqual(self.save_config(config, self.admin_config()[2]["revision"])[0], 200)
+        self.assertEqual(self.request("GET", "/orders/latest")[2], "latest")
+        self.assertEqual(self.request("GET", "/orders/42")[2], "order")
+        self.assertEqual(self.request("GET", "/orders/a%2Fb/items/a+b?detail=yes")[2], "selected")
+        self.assertEqual(self.request("GET", "/orders/a%2Fb/items/a%2Bb?detail=yes")[2], "selected")
+        self.assertEqual(self.request("GET", "/orders/a%2Fb/items/a+b")[2], "order-item")
+        self.assertEqual(self.request("GET", "/orders/other/items/a+b?detail=yes")[2], "order-item")
+        self.assertEqual(self.request("GET", "/products/1/items/2")[2], "generic")
+        for path in ("/orders/", "/orders/42/", "/orders/a/b/items/a+b"):
+            self.assertEqual(self.request("GET", path)[0], 404)
+        self.assertEqual(self.request("GET", "/orders/%ZZ")[0], 400)
+
+        catalog = self.request("GET", "/viewer/api/catalog")[2]["catalog"]["routes"]
+        self.assertEqual(catalog[1]["rules"][1]["match"]["path"], config["routes"][1]["rules"][1]["match"]["path"])
+        revision = self.admin_config()[2]["revision"]
+        for invalid_route, reason in (
+            (route("/orders/{orderId}", "duplicate"), "DuplicateRoute"),
+            (route("/users/{id}/{id}", "duplicate-name"), "DuplicatePathParameter"),
+            (route("/users/{1id}", "invalid-name"), "InvalidPathParameter"),
+            ({"method": "GET", "path": "/fixed", "rules": [{
+                "id": "invalid", "match": {"path": [{"name": "id", "value": "42"}]}, "response": {"body": None},
+            }]}, "InvalidPathMatch"),
+        ):
+            invalid = {"routes": config["routes"] + [invalid_route]}
+            status, _, error = self.save_config(invalid, revision)
+            self.assertEqual((status, error["reason"]), (400, reason))
+        self.assertEqual(self.request("GET", "/orders/latest")[2], "latest")
 
     def test_reload_during_delayed_responses_keeps_snapshot_alive(self):
         config = copy.deepcopy(self.baseline)

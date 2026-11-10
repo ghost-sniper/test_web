@@ -326,6 +326,7 @@ textarea::placeholder {
 .viewer-payload {
   margin: 0;
   padding: 12px;
+  min-height: 0;
   max-height: 360px;
   overflow: auto;
   background: var(--code-bg);

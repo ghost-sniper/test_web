@@ -77,8 +77,8 @@ pub const App = struct {
             }
             return 0;
         }
-        for (config.routes) |route| {
-            if (!std.mem.eql(u8, route.method, @tagName(req.method)) or !std.mem.eql(u8, route.path, req.url.path)) continue;
+        if (mock.findRoute(config.routes, @tagName(req.method), path)) |matched_route| {
+            const route = matched_route.route;
             if (route.rate_limit.requests_per_second != 0 or route.rate_limit.clients.len != 0) {
                 const client = clientIp(req, config.trusted_proxies);
                 const limit = route.rate_limit.limitFor(client);
@@ -95,10 +95,18 @@ pub const App = struct {
                     return 0;
                 }
             }
+            const path_parameters = matched_route.parameters(res.arena, path) catch |err| switch (err) {
+                error.InvalidPathEncoding => {
+                    try reply(res, 400, "invalid URL path encoding");
+                    return 0;
+                },
+                else => return err,
+            };
             const body = mock.parseBody(res.arena, route.request, req.body()) catch |err| {
                 switch (err) {
                     error.MissingBody => try reply(res, 400, "missing request body"),
                     error.InvalidBody => try reply(res, 400, "格式不正确，请使用标准JSON格式传输"),
+                    error.InvalidXml => try reply(res, 400, "请求体必须是有效的 UTF-8 XML"),
                     else => return err,
                 }
                 return 0;
@@ -108,23 +116,44 @@ pub const App = struct {
                 if (selected) |current| {
                     if (rule.priority <= current.priority) continue;
                 }
-                if (try matches(rule.match, body, req)) selected = rule;
+                const matched = matches(rule.match, body, path_parameters, req) catch |err| switch (err) {
+                    error.InvalidEscapeSequence => {
+                        try reply(res, 400, "invalid URL query encoding");
+                        return 0;
+                    },
+                    else => return err,
+                };
+                if (matched) selected = rule;
             }
             if (selected) |rule| {
-                const value = if (rule.response.template) mock.render(res.arena, rule.response.body, body) catch |err| {
+                const response = rule.response;
+                const value = if (response.template) mock.render(res.arena, response, route.request, body) catch |err| {
                     if (err != error.InvalidBody) return err;
                     try reply(res, 400, "request value cannot be rendered");
                     return 0;
-                } else rule.response.body;
+                } else response.body;
                 // Serialize while the snapshot is locked, including all strings
                 // borrowed by defaults/templates from the config tree.
-                if (rule.response.status != 204 and rule.response.status != 205 and rule.response.status != 304) try json(res, value);
-                res.status = rule.response.status;
-                for (rule.response.headers) |pair| {
-                    if (std.ascii.eqlIgnoreCase(pair.name, "content-type")) res.content_type = null;
+                var default_xml_type = false;
+                if (response.status != 204 and response.status != 205 and response.status != 304) {
+                    switch (response.format) {
+                        .json => try json(res, value),
+                        .xml => {
+                            res.body = try res.arena.dupe(u8, value.string);
+                            default_xml_type = true;
+                        },
+                    }
+                }
+                res.status = response.status;
+                for (response.headers) |pair| {
+                    if (std.ascii.eqlIgnoreCase(pair.name, "content-type")) {
+                        res.content_type = null;
+                        default_xml_type = false;
+                    }
                     try res.headerOpts(pair.name, pair.value, .{ .dupe_name = true, .dupe_value = true });
                 }
-                return rule.response.delay_ms;
+                if (default_xml_type) res.header("Content-Type", "application/xml; charset=utf-8");
+                return response.delay_ms;
             }
             try reply(res, 404, "no matching mock rule");
             return 0;
@@ -307,8 +336,13 @@ fn reply(res: *httpz.Response, status: u16, message: []const u8) !void {
     try json(res, .{ .code = status, .message = message });
 }
 
-fn matches(spec: mock.Match, body: std.json.Value, req: *httpz.Request) !bool {
-    if (spec.body) |expected| if (!mock.bodyMatches(expected, body)) return false;
+fn matches(spec: mock.Match, body: std.json.Value, path_parameters: []const mock.Pair, req: *httpz.Request) !bool {
+    for (spec.path) |expected| {
+        for (path_parameters) |actual| {
+            if (std.mem.eql(u8, expected.name, actual.name) and std.mem.eql(u8, expected.value, actual.value)) break;
+        } else return false;
+    }
+    if (spec.body) |expected| if (!mock.requestBodyMatches(expected, body)) return false;
     for (spec.headers) |pair| {
         const name = try std.ascii.allocLowerString(req.arena, pair.name);
         if (!std.mem.eql(u8, req.header(name) orelse return false, pair.value)) return false;

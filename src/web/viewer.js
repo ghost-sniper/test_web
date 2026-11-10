@@ -80,51 +80,65 @@ function renderRoutes() {
   $('viewerNoResults').hidden = list.children.length !== 0;
 }
 
-function requestInfo(request) {
+function requestInfo(route) {
+  const { request } = route;
   const section = element('section', undefined, 'viewer-section');
   section.append(element('h3', '请求信息'));
+  const parameters = Array.from(route.path.matchAll(/\/\{([A-Za-z_][A-Za-z0-9_]*)\}(?=\/|$)/g), match => match[1]);
+  if (parameters.length) section.append(element('p', `路径参数 · ${parameters.join('、')}`, 'hint'));
   const requirement = request.body_required ? '必填' : '可省略';
-  const format = request.fields.length ? 'JSON 对象' : 'JSON';
+  const format = request.format === 'xml' ? 'XML' : request.fields.length ? 'JSON 对象' : 'JSON';
   section.append(element('p', `请求体 · ${format} · ${requirement}`, 'hint'));
   if (request.fields.length) {
     section.append(table(['字段', '类型', '必填', '默认值'], request.fields.map(field => [
       field.name, field.type, field.required ? '是' : '否',
       field.default === null ? '—' : MockJSON.stringify(field.default),
     ])));
-  } else {
+  } else if (request.format !== 'xml') {
     section.append(element('p', '未配置字段校验。', 'hint'));
   }
   return section;
+}
+
+function payloadPreview(text) {
+  const payload = element('pre', text, 'viewer-payload');
+  payload.tabIndex = 0;
+  return payload;
 }
 
 function ruleInfo(rule, method) {
   const { match, response } = rule;
   const content = element('div', undefined, 'viewer-rule-content');
   content.append(element('h4', '匹配条件'));
+  const xmlMatch = typeof match.body === 'string' ? match.body : null;
+  const jsonMatch = xmlMatch === null ? match.body : null;
   const conditions = [
+    ...(match.path ?? []).map(pair => ['路径参数', pair.name, MockJSON.stringify(pair.value)]),
     ...match.query.map(pair => ['查询参数', pair.name, MockJSON.stringify(pair.value)]),
     ...match.headers.map(pair => ['请求头', pair.name, MockJSON.stringify(pair.value)]),
-    ...Object.entries(match.body ?? {}).map(([name, value]) => ['请求体字段', name, MockJSON.stringify(value)]),
+    ...Object.entries(jsonMatch ?? {}).map(([name, value]) => ['请求体字段', name, MockJSON.stringify(value)]),
   ];
-  const requiresObject = match.body !== null && !Object.keys(match.body).length;
+  const requiresObject = jsonMatch !== null && !Object.keys(jsonMatch).length;
   if (requiresObject) content.append(element('p', '请求体必须为 JSON 对象。', 'hint'));
   if (conditions.length) {
     content.append(table(['来源', '名称', '匹配值'], conditions));
-  } else if (!requiresObject) {
+  } else if (!requiresObject && xmlMatch === null) {
     content.append(element('p', '匹配所有通过请求校验的请求。', 'hint'));
+  }
+  if (xmlMatch !== null) {
+    content.append(element('p', '请求体 XML · 全文匹配', 'hint'), payloadPreview(xmlMatch));
   }
 
   if (response.headers.length) {
     content.append(element('h4', '自定义响应头'));
     content.append(table(['名称', '值'], response.headers.map(pair => [pair.name, pair.value])));
   }
-  content.append(element('h4', response.template ? '响应体模板' : '响应体'));
+  const xmlResponse = response.format === 'xml';
+  content.append(element('h4', (response.template ? '响应体模板' : '响应体') + (xmlResponse ? ' · XML' : '')));
   if (method === 'HEAD' || [204, 205, 304].includes(response.status)) {
     content.append(element('p', '此响应不发送响应体。', 'hint'));
   } else {
-    const payload = element('pre', MockJSON.stringify(response.body), 'viewer-payload');
-    payload.tabIndex = 0;
-    content.append(payload);
+    content.append(payloadPreview(xmlResponse ? response.body : MockJSON.stringify(response.body)));
   }
   return content;
 }
@@ -166,7 +180,7 @@ function renderDetails() {
     }
     rules.append(panel);
   });
-  details.replaceChildren(requestInfo(route.request), rules);
+  details.replaceChildren(requestInfo(route), rules);
 }
 
 async function readCatalog() {
