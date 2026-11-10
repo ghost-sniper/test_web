@@ -112,6 +112,7 @@ function ruleInfo(rule, method) {
   content.append(element('h4', '匹配条件'));
   const xmlMatch = typeof match.body === 'string' ? match.body : null;
   const jsonMatch = xmlMatch === null ? match.body : null;
+  const expression = match.body_expression;
   const conditions = [
     ...(match.path ?? []).map(pair => ['路径参数', pair.name, MockJSON.stringify(pair.value)]),
     ...match.query.map(pair => ['查询参数', pair.name, MockJSON.stringify(pair.value)]),
@@ -122,11 +123,21 @@ function ruleInfo(rule, method) {
   if (requiresObject) content.append(element('p', '请求体必须为 JSON 对象。', 'hint'));
   if (conditions.length) {
     content.append(table(['来源', '名称', '匹配值'], conditions));
-  } else if (!requiresObject && xmlMatch === null) {
+  } else if (!requiresObject && xmlMatch === null && !expression) {
     content.append(element('p', '匹配所有通过请求校验的请求。', 'hint'));
   }
   if (xmlMatch !== null) {
     content.append(element('p', '请求体 XML · 全文匹配', 'hint'), payloadPreview(xmlMatch));
+  }
+  if (expression) {
+    const mode = { jsonpath: 'JSONPath', xpath: 'XPath', regex: '正则表达式' }[expression.mode];
+    content.append(element('p', `请求体 · ${mode}`, 'hint'), payloadPreview(expression.expression));
+    if (expression.expected) {
+      content.append(element('p', '期望值', 'hint'), payloadPreview(MockJSON.stringify(expression.expected.value)));
+    }
+    if (expression.namespaces?.length) {
+      content.append(table(['XPath 前缀', '命名空间 URI'], expression.namespaces.map(({ prefix, uri }) => [prefix, uri])));
+    }
   }
 
   if (response.headers.length) {

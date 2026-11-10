@@ -141,6 +141,133 @@
         "requests_per_second": 200,
         "clients": []
       }
+    },
+    {
+      "method": "POST",
+      "path": "/examples/jsonpath",
+      "folder_id": "mock-examples",
+      "request": { "format": "json", "body_required": true },
+      "rules": [
+        {
+          "id": "paid-order",
+          "match": {
+            "body_expression": {
+              "mode": "jsonpath",
+              "expression": "$.orders[?@.qty >= 2].status",
+              "expected": { "value": "paid" }
+            }
+          },
+          "response": { "body": { "matched": "jsonpath" } }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/examples/xpath",
+      "folder_id": "mock-examples",
+      "request": { "format": "xml", "body_required": true },
+      "rules": [
+        {
+          "id": "paid-order",
+          "match": {
+            "body_expression": {
+              "mode": "xpath",
+              "expression": "/o:order[o:status='paid']",
+              "namespaces": [{ "prefix": "o", "uri": "urn:orders" }]
+            }
+          },
+          "response": { "body": { "matched": "xpath" } }
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/examples/query",
+      "folder_id": "mock-examples",
+      "rules": [
+        {
+          "id": "paid-from-web",
+          "match": {
+            "query": [
+              { "name": "status", "value": "paid" },
+              { "name": "source", "value": "web" }
+            ]
+          },
+          "response": { "body": { "matched": "query" } }
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/examples/items/{id}",
+      "folder_id": "mock-examples",
+      "rules": [
+        {
+          "id": "item-42",
+          "match": { "path": [{ "name": "id", "value": "42" }] },
+          "response": { "body": { "matched": "path", "id": 42 } }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/examples/regex",
+      "folder_id": "mock-examples",
+      "request": { "format": "json", "body_required": true },
+      "rules": [
+        {
+          "id": "order-code",
+          "match": {
+            "body_expression": {
+              "mode": "regex",
+              "expression": "\"code\"\\s*:\\s*\"AB-\\d{2}\""
+            }
+          },
+          "response": { "body": { "matched": "regex" } }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/examples/template/json",
+      "folder_id": "mock-examples",
+      "request": {
+        "format": "json",
+        "body_required": true,
+        "fields": [{ "name": "name", "type": "string", "required": true }]
+      },
+      "rules": [
+        {
+          "id": "greet",
+          "response": {
+            "format": "json",
+            "template": true,
+            "body": { "message": "Hello, {{body.name}}!" }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/examples/template/xml",
+      "folder_id": "mock-examples",
+      "request": { "format": "xml", "body_required": true },
+      "rules": [
+        {
+          "id": "greet",
+          "response": {
+            "format": "xml",
+            "template": true,
+            "body": "<greeting>Hello, {{body.name}}!</greeting>"
+          }
+        }
+      ]
+    }
+  ],
+  "folders": [
+    {
+      "id": "mock-examples",
+      "name": "Examples"
     }
   ]
 }

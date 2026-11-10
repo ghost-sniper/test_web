@@ -102,6 +102,24 @@ class MockServiceTests(MockServer):
     def setUp(self):
         self.assertEqual(self.reload(copy.deepcopy(self.baseline))[0], 200)
 
+    def test_bundled_examples(self):
+        xml = {'Content-Type': 'application/xml'}
+        examples = [
+            ('POST', '/examples/jsonpath', {'orders': [{'qty': 2, 'status': 'paid'}]}, None, {'matched': 'jsonpath'}),
+            ('POST', '/examples/xpath', b'<order xmlns="urn:orders"><status>paid</status></order>', xml, {'matched': 'xpath'}),
+            ('GET', '/examples/query?status=paid&source=web', None, None, {'matched': 'query'}),
+            ('GET', '/examples/items/42', None, None, {'matched': 'path', 'id': 42}),
+            ('POST', '/examples/regex', {'code': 'AB-42'}, None, {'matched': 'regex'}),
+            ('POST', '/examples/template/json', {'name': 'Ada'}, None, {'message': 'Hello, Ada!'}),
+            ('POST', '/examples/template/xml', b'<request><name>Ada</name></request>', xml, '<greeting>Hello, Ada!</greeting>'),
+        ]
+        for method, path, body, headers, expected in examples:
+            with self.subTest(path=path):
+                self.assertEqual(self.request(method, path, body, headers)[::2], (200, expected))
+        self.assertEqual(self.request('GET', '/examples/query?status=paid')[0], 404)
+        self.assertEqual(self.request('GET', '/examples/items/43')[0], 404)
+        self.assertEqual(self.request('POST', '/examples/regex', {'code': 'AB-7'})[0], 404)
+
     def test_admin_assets_and_protected_config(self):
         for path, mime in (('/admin/', 'text/html'), ('/admin', 'text/html'),
                            ('/admin/app.js', 'text/javascript'), ('/admin/style.css', 'text/css')):
@@ -137,7 +155,7 @@ class MockServiceTests(MockServer):
         updated['config']['routes'].pop()
         self.assertEqual(self.save_config(updated['config'], updated['revision'])[0], 200)
         self.assertEqual(self.request('GET', '/online')[0], 404)
-        self.assertEqual(len(json.loads(self.config_path.read_text(encoding='utf-8'))['routes']), 2)
+        self.assertEqual(json.loads(self.config_path.read_text(encoding='utf-8'))['routes'], self.baseline['routes'])
 
     def test_viewer_reads_current_catalog_without_write_access(self):
         current = self.admin_config()[2]
@@ -155,8 +173,10 @@ class MockServiceTests(MockServer):
         self.assertEqual(snapshot['generation'], current['generation'])
         catalog = snapshot['catalog']
         self.assertEqual(set(catalog), {'folders', 'routes'})
-        self.assertEqual(catalog['folders'], current['config'].get('folders', []))
-        hello, order = catalog['routes']
+        folders = [{'parent_id': None, **folder} for folder in current['config'].get('folders', [])]
+        self.assertEqual(catalog['folders'], folders)
+        routes_by_path = {route['path']: route for route in catalog['routes']}
+        hello, order = routes_by_path['/hello/test'], routes_by_path['/order']
         self.assertEqual(set(hello), {'method', 'path', 'folder_id', 'request', 'rules'})
         self.assertEqual((hello['method'], hello['path']), ('POST', '/hello/test'))
         self.assertEqual(hello['request']['fields'][0]['name'], 'name')
@@ -179,12 +199,12 @@ class MockServiceTests(MockServer):
     def test_admin_persists_folders_and_rejects_invalid_tree(self):
         data = self.admin_config()[2]
         config = data['config']
-        config['folders'] = [
-            {'id': 'examples', 'name': '示例'},
-            {'id': 'hello', 'name': '问候', 'parent_id': 'examples'},
-            {'id': 'empty', 'name': '空目录'},
-        ]
-        config['routes'][0]['folder_id'] = 'hello'
+        config.setdefault('folders', []).extend([
+            {'id': 'test-examples', 'name': '示例'},
+            {'id': 'test-hello', 'name': '问候', 'parent_id': 'test-examples'},
+            {'id': 'test-empty', 'name': '空目录'},
+        ])
+        config['routes'][0]['folder_id'] = 'test-hello'
         status, _, saved = self.save_config(config, data['revision'])
         self.assertEqual(status, 200)
         self.assertEqual(self.reload()[0], 200)
@@ -192,7 +212,8 @@ class MockServiceTests(MockServer):
         self.assertEqual(self.request('POST', '/hello/test', {})[0], 200)
 
         invalid = copy.deepcopy(config)
-        invalid['folders'][0]['parent_id'] = 'hello'
+        parent = next(folder for folder in invalid['folders'] if folder['id'] == 'test-examples')
+        parent['parent_id'] = 'test-hello'
         status, _, rejected = self.save_config(invalid, saved['revision'])
         self.assertEqual((status, rejected['reason']), (400, 'FolderCycle'))
         invalid = copy.deepcopy(config)
@@ -248,7 +269,7 @@ class MockServiceTests(MockServer):
         self.assertIsInstance(config['routes'][0]['rules'][0]['match']['body']['v'], float)
         self.assertEqual(config['routes'][0]['rules'][0]['response']['body']['id'], 9223372036854775807)
 
-    def test_migrated_hello_and_validation(self):
+    def test_hello_defaults_and_validation(self):
         status, _, body = self.request("POST", "/hello/test", {"name": '小"明', "age": 20, "ignored": True})
         self.assertEqual(status, 200)
         self.assertEqual(body, {"message": '小"明明年这个时候你是21岁', "code": 200})
@@ -365,19 +386,20 @@ class MockServiceTests(MockServer):
             self.assertEqual(self.save_config(broken, revision)[0], 400, invalid)
         self.assertEqual(self.request('POST', '/xml-template', payload)[0], 200)
 
-    def test_migrated_order(self):
+    def test_order_responses_and_validation(self):
         order = dict(product_name="test", product_id=1, order_id="o1", count=2, buyer_account="demo", pay_method="WeChat")
         self.assertEqual(self.request("POST", "/order", order)[2], {"code": 200, "message": "下单成功"})
         order["pay_method"] = "UnionPay"
+        route = next(route for route in self.baseline["routes"] if route["method"] == "POST" and route["path"] == "/order")
+        unionpay = next(rule["response"] for rule in route["rules"] if rule["id"] == "order-unionpay")
         status, _, body = self.request("POST", "/order", order)
-        self.assertEqual(status, 400)
-        self.assertEqual(body["message"], "不支持银联支付方式")
+        self.assertEqual((status, body), (unionpay.get("status", 200), unionpay["body"]))
         del order["count"]
         self.assertEqual(self.request("POST", "/order", order)[0], 400)
 
     def test_health_unknown_routes_and_methods(self):
         status, _, body = self.request("GET", "/healthz")
-        self.assertEqual((status, body["status"], body["routes"]), (200, "ok", 2))
+        self.assertEqual((status, body["status"], body["routes"]), (200, "ok", len(self.baseline["routes"])))
         self.assertEqual(self.request("HEAD", "/healthz")[2], None)
         self.assertEqual(self.request("POST", "/healthz")[0], 405)
         self.assertEqual(self.request("GET", "/missing")[0], 404)
@@ -466,6 +488,73 @@ class MockServiceTests(MockServer):
         for query in (target, f"{target}&flag=no", f"{name}=other&{target}&flag"):
             self.assertEqual(self.request("GET", f"/query?{query}")[2], "fallback")
         self.assertEqual(self.request("GET", "/query?flag=%ZZ")[0], 400)
+
+    def test_request_body_expression_matching(self):
+        def rule(name, mode, expression, **options):
+            return {'id': name, 'match': {'body_expression': {
+                'mode': mode, 'expression': expression, **options,
+            }}, 'response': {'body': name}}
+
+        fallback = {'id': 'fallback', 'response': {'body': 'fallback'}}
+        namespaces = [{'prefix': 'o', 'uri': 'urn:orders'}]
+        config = {'routes': [
+            {'method': 'POST', 'path': '/jsonpath', 'rules': [
+                rule('paid', 'jsonpath', '$.orders[?@.qty >= 2].status', expected={'value': 'paid'}),
+                rule('null', 'jsonpath', '$.value', expected={'value': None}),
+                rule('exists', 'jsonpath', '$.value'),
+                rule('default', 'jsonpath', '$.region', expected={'value': 'sg'}),
+                fallback,
+            ], 'request': {'fields': [{'name': 'region', 'type': 'string', 'default': 'sg'}]}},
+            {'method': 'POST', 'path': '/xpath', 'request': {'format': 'xml'}, 'rules': [
+                rule('sku', 'xpath', '/o:order/o:item/@sku', expected={'value': 'paid'}, namespaces=namespaces),
+                rule('pending', 'xpath', 'count(/o:order/o:item[@sku="pending"]) > 0', namespaces=namespaces),
+                fallback,
+            ]},
+            {'method': 'POST', 'path': '/regex-json', 'rules': [
+                rule('raw-json', 'regex', r'^\{\s*"code"\s*:\s*\d+\s*\}$'),
+                fallback,
+            ]},
+            {'method': 'POST', 'path': '/regex-xml', 'request': {'format': 'xml'}, 'rules': [
+                rule('raw-xml', 'regex', r'<order\s+id="AB-\d{2}"\s*/>'),
+                fallback,
+            ]},
+        ]}
+        self.assertEqual(self.save_config(config, self.admin_config()[2]['revision'])[0], 200)
+        self.assertEqual(self.request('POST', '/jsonpath', {'orders': [
+            {'qty': 3, 'status': 'pending'}, {'qty': 2, 'status': 'paid'},
+        ]})[2], 'paid')
+        self.assertEqual(self.request('POST', '/jsonpath', {'value': None})[2], 'null')
+        self.assertEqual(self.request('POST', '/jsonpath', {'value': False})[2], 'exists')
+        self.assertEqual(self.request('POST', '/jsonpath', {'orders': [{'qty': 1, 'status': 'paid'}]})[2], 'default')
+        self.assertEqual(self.request('POST', '/jsonpath')[2], 'fallback')
+        self.assertEqual(self.request('POST', '/xpath', b'<order xmlns="urn:orders"><item sku="a"/><item sku="paid"/></order>')[2], 'sku')
+        self.assertEqual(self.request('POST', '/xpath', b'<order xmlns="urn:orders"><item sku="pending"/></order>')[2], 'pending')
+        self.assertEqual(self.request('POST', '/xpath', b'<order><item sku="paid"/></order>')[2], 'fallback')
+        self.assertEqual(self.request('POST', '/regex-json', b'{ "code": 42 }')[2], 'raw-json')
+        self.assertEqual(self.request('POST', '/regex-json', b'{"code": "42"}')[2], 'fallback')
+        self.assertEqual(self.request('POST', '/regex-json', b'{"\\u0063ode": 42}')[2], 'fallback')
+        self.assertEqual(self.request('POST', '/regex-json', b'{ "code":')[0], 400)
+        self.assertEqual(self.request('POST', '/regex-xml', b'<order id="AB-42"/>')[2], 'raw-xml')
+        self.assertEqual(self.request('POST', '/regex-xml', b'<order id="AB-42">')[0], 400)
+        catalog = self.request('GET', '/viewer/api/catalog')[2]['catalog']['routes']
+        self.assertEqual(catalog[1]['rules'][0]['match']['body_expression']['namespaces'], namespaces)
+
+        revision = self.admin_config()[2]['revision']
+        for route_index, changes, reason in (
+            (0, {'expression': '$.['}, 'InvalidJsonPath'),
+            (0, {'expression': '$[?match(@.a,@.b)]'}, 'UnsupportedJsonPathRegexFunction'),
+            (0, {'mode': 'xpath'}, 'XPathRequiresXml'),
+            (1, {'expression': '/o:order['}, 'InvalidXPath'),
+            (1, {'expected': {'value': 2}}, 'InvalidXPathExpectedValue'),
+            (1, {'mode': 'jsonpath', 'namespaces': []}, 'JsonPathRequiresJson'),
+            (2, {'expression': '['}, 'InvalidBodyRegex'),
+        ):
+            invalid = copy.deepcopy(config)
+            invalid['routes'][route_index]['rules'][0]['match']['body_expression'].update(changes)
+            status, _, response = self.save_config(invalid, revision)
+            self.assertEqual((status, response['reason']), (400, reason))
+        self.assertEqual(self.reload()[0], 200)
+        self.assertEqual(self.request('POST', '/regex-json', b'{"code":42}')[2], 'raw-json')
 
     def test_url_path_templates_and_parameter_conditions(self):
         def route(path, value):

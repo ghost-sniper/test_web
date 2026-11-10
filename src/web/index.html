@@ -71,7 +71,11 @@
               <details class="advanced" id="matchDetails"><summary>匹配条件 <span>路径 · 查询 · 请求体 · 请求头</span></summary>
                 <label>URL 路径参数匹配<textarea id="matchPath" rows="2" spellcheck="false" placeholder='{"id":"42"}' aria-describedby="pathMatchHint"></textarea></label>
                 <p class="hint" id="pathMatchHint">接口路径可写成 /orders/{id}。填入 {"id":"42"} 可匹配 /orders/42，留空或填写 {} 表示不限。</p>
+                <label>请求体匹配方式<select id="matchBodyMode"><option value="native">JSON 子集 / XML 全文</option><option value="jsonpath">JSONPath</option><option value="xpath">XPath</option><option value="regex">正则表达式</option></select></label>
                 <label><span id="matchBodyLabel">JSON 请求体子集（null 表示不限）</span><textarea id="matchBody" rows="3" spellcheck="false" placeholder="null"></textarea></label>
+                <p class="hint" id="matchBodyModeHint" hidden></p>
+                <label id="matchExpectedLabel" hidden>期望值 JSON（可选）<textarea id="matchBodyExpected" rows="2" spellcheck="false" placeholder='"paid"'></textarea></label>
+                <label id="matchNamespacesLabel" hidden>XPath 命名空间 JSON 对象<textarea id="matchNamespaces" rows="2" spellcheck="false" placeholder='{"o":"urn:orders"}'></textarea></label>
                 <label>URL 查询参数匹配<textarea id="matchQuery" rows="3" spellcheck="false" placeholder="?scenario=error&amp;source=web" aria-describedby="queryMatchHint"></textarea></label>
                 <p class="hint" id="queryMatchHint">可粘贴带查询参数的 URL、以 ? 开头的查询字符串，或填写 JSON 对象。所有填写的参数都必须匹配。</p>
                 <label>请求头 JSON 对象<textarea id="matchHeaders" rows="3" spellcheck="false" placeholder='{"X-Scenario":"test"}'></textarea></label>

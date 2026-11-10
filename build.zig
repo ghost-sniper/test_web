@@ -90,6 +90,11 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("httpz", httpz.module("httpz"));
     const xml = b.dependency("xml", .{ .target = target, .optimize = optimize });
     exe.root_module.addImport("xml", xml.module("xml"));
+    const dependency_options = .{ .target = target, .optimize = optimize };
+    exe.root_module.addImport("jsonpath", jsonPathModule(b, target, optimize));
+    exe.root_module.addImport("xpath", b.dependency("xpath", dependency_options).module("zxpath"));
+    exe.root_module.addImport("ztree", b.dependency("ztree", dependency_options).module("ztree"));
+    exe.root_module.addImport("regex", b.dependency("regex", dependency_options).module("regex"));
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
     // step). By default the install prefix is `zig-out/` but can be overridden
@@ -159,4 +164,28 @@ pub fn build(b: *std.Build) void {
     // Lastly, the Zig build system is relatively simple and self-contained,
     // and reading its source code will allow you to master it.
 
+}
+
+fn jsonPathModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Module {
+    const upstream = b.dependency("jsonpath", .{ .target = target, .optimize = optimize });
+    const sources = b.addWriteFiles();
+    const root = sources.addCopyFile(upstream.path("src/root.zig"), "root.zig");
+    // The pinned release initializes unmanaged lists with the pre-0.17 syntax.
+    // Adapt its sources in the build cache while keeping the downloaded package intact.
+    for ([_][]const u8{ "model.zig", "model_query.zig", "parser.zig", "query.zig" }) |name| {
+        const relative = b.fmt("src/{s}", .{name});
+        b.dependOnFileContents(upstream.path(relative));
+        const path = upstream.builder.root.join(b.allocator, relative) catch @panic("out of memory");
+        const source = path.root_dir.handle.readFileAlloc(b.graph.io, path.sub_path, b.allocator, .limited(128 * 1024)) catch
+            @panic("could not read the pinned JSONPath package");
+        const lists = std.mem.replaceOwned(u8, b.allocator, source, "){};", ").empty;") catch @panic("out of memory");
+        const cursors = std.mem.replaceOwned(u8, b.allocator, lists, ".cursors = .{}", ".cursors = .empty") catch @panic("out of memory");
+        _ = sources.add(name, cursors);
+    }
+    const options = b.addOptions();
+    options.addOption(bool, "debug_query", false);
+    const module = b.createModule(.{ .root_source_file = root, .target = target, .optimize = optimize });
+    module.addOptions("build_options", options);
+    module.addImport("mvzr", b.createModule(.{ .root_source_file = b.path("src/jsonpath_regex.zig"), .target = target }));
+    return module;
 }

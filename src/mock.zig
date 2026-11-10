@@ -1,6 +1,7 @@
 const std = @import("std");
 const xml = @import("xml");
 const rate = @import("rate_limit.zig");
+pub const body_match = @import("body_match.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 const BodyFormat = enum { json, xml };
@@ -19,6 +20,7 @@ pub const Request = struct {
 pub const Pair = struct { name: []const u8, value: []const u8 };
 pub const Match = struct {
     body: ?Value = null,
+    body_expression: ?body_match.Spec = null,
     path: []const Pair = &.{},
     query: []const Pair = &.{},
     headers: []const Pair = &.{},
@@ -70,6 +72,7 @@ pub const Snapshot = struct {
     revision: [64]u8,
     source: []const u8,
     viewer_catalog: []const u8,
+    body_expressions: std.AutoHashMapUnmanaged(*const Rule, body_match.Compiled),
 
     pub fn parse(allocator: Allocator, bytes: []const u8) !Snapshot {
         var arena = std.heap.ArenaAllocator.init(allocator);
@@ -78,7 +81,15 @@ pub const Snapshot = struct {
         try validate(config, allocator);
         const source = try arena.allocator().dupe(u8, bytes);
         const viewer_catalog = try buildViewerCatalog(config, arena.allocator());
-        return .{ .arena = arena, .config = config, .revision = digest(bytes), .source = source, .viewer_catalog = viewer_catalog };
+        const body_expressions = try compileBodyExpressions(config, arena.allocator(), allocator);
+        return .{
+            .arena = arena,
+            .config = config,
+            .revision = digest(bytes),
+            .source = source,
+            .viewer_catalog = viewer_catalog,
+            .body_expressions = body_expressions,
+        };
     }
 
     pub fn load(io: std.Io, allocator: Allocator, path: []const u8) !Snapshot {
@@ -88,9 +99,30 @@ pub const Snapshot = struct {
     }
 
     pub fn deinit(self: *Snapshot) void {
+        deinitBodyExpressions(&self.body_expressions);
         self.arena.deinit();
     }
 };
+
+fn compileBodyExpressions(config: Config, arena: Allocator, allocator: Allocator) !std.AutoHashMapUnmanaged(*const Rule, body_match.Compiled) {
+    var compiled: std.AutoHashMapUnmanaged(*const Rule, body_match.Compiled) = .empty;
+    errdefer deinitBodyExpressions(&compiled);
+    for (config.routes) |route| {
+        for (route.rules) |*rule| {
+            const spec = rule.match.body_expression orelse continue;
+            if (rule.match.body != null) return error.ConflictingBodyMatchers;
+            var matcher = try body_match.Compiled.init(arena, allocator, spec, route.request.format == .xml);
+            errdefer matcher.deinit();
+            try compiled.put(arena, rule, matcher);
+        }
+    }
+    return compiled;
+}
+
+fn deinitBodyExpressions(compiled: *std.AutoHashMapUnmanaged(*const Rule, body_match.Compiled)) void {
+    var values = compiled.valueIterator();
+    while (values.next()) |matcher| matcher.deinit();
+}
 
 fn buildViewerCatalog(config: Config, allocator: Allocator) ![]const u8 {
     var output: std.Io.Writer.Allocating = .init(allocator);
@@ -469,30 +501,7 @@ pub fn requestBodyMatches(expected: Value, actual: Value) bool {
     return document.len == 0;
 }
 
-/// Objects match recursively as subsets; arrays and scalar values match exactly.
-pub fn bodyMatches(expected: Value, actual: Value) bool {
-    if (std.meta.activeTag(expected) != std.meta.activeTag(actual)) return false;
-    return switch (expected) {
-        .null => true,
-        .bool => |v| v == actual.bool,
-        .integer => |v| v == actual.integer,
-        .float => |v| v == actual.float,
-        .string, .number_string => |v| std.mem.eql(u8, v, if (actual == .string) actual.string else actual.number_string),
-        .array => |arr| blk: {
-            if (arr.items.len != actual.array.items.len) break :blk false;
-            for (arr.items, actual.array.items) |a, b| if (!bodyMatches(a, b)) break :blk false;
-            break :blk true;
-        },
-        .object => |obj| blk: {
-            var it = obj.iterator();
-            while (it.next()) |entry| {
-                const value = actual.object.get(entry.key_ptr.*) orelse break :blk false;
-                if (!bodyMatches(entry.value_ptr.*, value)) break :blk false;
-            }
-            break :blk true;
-        },
-    };
-}
+const bodyMatches = body_match.jsonSubset;
 
 const Expression = struct { name: []const u8, add: ?i64 };
 fn expression(text: []const u8) !Expression {

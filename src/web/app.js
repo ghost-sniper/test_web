@@ -6,7 +6,7 @@ const pretty = value => MockJSON.stringify(value);
 const clone = value => MockJSON.parse(pretty(value));
 const currentRoute = () => state.config?.routes[state.route];
 const currentRule = () => currentRoute()?.rules[state.rule];
-const editorIds = ['routeMethod', 'routePath', 'routeFolder', 'routeRateLimit', 'routeClientLimits', 'trustedProxyIps', 'requestFormat', 'xmlBodyRequired', 'requestSpec', 'ruleId', 'priority', 'matchBody', 'matchPath', 'matchQuery', 'matchHeaders', 'status', 'delay', 'responseFormat', 'template', 'responseBody', 'responseHeaders'];
+const editorIds = ['routeMethod', 'routePath', 'routeFolder', 'routeRateLimit', 'routeClientLimits', 'trustedProxyIps', 'requestFormat', 'xmlBodyRequired', 'requestSpec', 'ruleId', 'priority', 'matchBodyMode', 'matchBody', 'matchBodyExpected', 'matchNamespaces', 'matchPath', 'matchQuery', 'matchHeaders', 'status', 'delay', 'responseFormat', 'template', 'responseBody', 'responseHeaders'];
 const maxRequestsPerSecond = 10000;
 const collapsedFolders = new Set();
 let editingFolderId = null;
@@ -328,11 +328,15 @@ function render() {
   $('responseBody').value = responseFormat === 'xml' ? rule.response.body ?? '' : pretty(rule.response.body);
   $('responseHeaders').value = pretty(fromPairs(rule.response.headers));
   const matchBody = rule.match?.body ?? null;
-  $('matchBody').value = typeof matchBody === 'string' ? matchBody : (format === 'xml' && matchBody === null ? '' : pretty(matchBody));
+  const expression = rule.match?.body_expression;
+  $('matchBodyMode').value = expression?.mode ?? 'native';
+  $('matchBody').value = expression?.expression ?? (typeof matchBody === 'string' ? matchBody : (format === 'xml' && matchBody === null ? '' : pretty(matchBody)));
+  $('matchBodyExpected').value = expression?.expected ? pretty(expression.expected.value) : '';
+  $('matchNamespaces').value = pretty(Object.fromEntries((expression?.namespaces ?? []).map(({ prefix, uri }) => [prefix, uri])));
   $('matchPath').value = pretty(fromPairs(rule.match?.path));
   $('matchQuery').value = pretty(fromPairs(rule.match?.query));
   $('matchHeaders').value = pretty(fromPairs(rule.match?.headers));
-  $('matchDetails').open = !!(rule.match?.body || rule.match?.path?.length || rule.match?.query?.length || rule.match?.headers?.length);
+  $('matchDetails').open = !!(matchBody || expression || rule.match?.path?.length || rule.match?.query?.length || rule.match?.headers?.length);
   $('deleteRule').disabled = route.rules.length === 1;
   $('deleteRule').title = route.rules.length === 1 ? '每个接口至少保留一个场景；也可删除整个接口' : '删除当前场景';
   updateBodyEditors();
@@ -343,8 +347,23 @@ function updateBodyEditors() {
   const xmlResponse = $('responseFormat').value === 'xml';
   $('jsonRequestFields').hidden = xmlRequest;
   $('xmlRequestOptions').hidden = !xmlRequest;
-  $('matchBodyLabel').textContent = xmlRequest ? 'XML 请求体全文匹配（留空表示不限）' : 'JSON 请求体子集（null 表示不限）';
-  $('matchBody').placeholder = xmlRequest ? '<request />' : 'null';
+  const modeSelect = $('matchBodyMode');
+  const mode = modeSelect.value;
+  modeSelect.options[0].textContent = xmlRequest ? 'XML 全文' : 'JSON 子集';
+  modeSelect.querySelector('[value="jsonpath"]').disabled = xmlRequest;
+  modeSelect.querySelector('[value="xpath"]').disabled = !xmlRequest;
+  const [label, placeholder, hint] = {
+    native: xmlRequest ? ['XML 请求体全文匹配（留空表示不限）', '<request />', ''] : ['JSON 请求体子集（null 表示不限）', 'null', ''],
+    jsonpath: ['JSONPath 表达式', '$.order.status', '至少选中一个值即命中。填写期望值时，任一选中值须与它相等。'],
+    xpath: ['XPath 表达式', "/order[status='paid']", '默认按 XPath 布尔值判断。填写期望值时，按字符串比较。'],
+    regex: ['正则表达式', '"status"\\s*:\\s*"paid"', '在原始请求体中查找匹配。使用 ^ 和 $ 可限制起止位置。'],
+  }[mode];
+  $('matchBodyLabel').textContent = label;
+  $('matchBody').placeholder = placeholder;
+  $('matchBodyModeHint').textContent = hint;
+  $('matchBodyModeHint').hidden = !hint;
+  $('matchExpectedLabel').hidden = mode !== 'jsonpath' && mode !== 'xpath';
+  $('matchNamespacesLabel').hidden = mode !== 'xpath';
   $('responseBodyFormat').textContent = xmlResponse ? 'XML' : 'JSON';
   const templateHint = $('templateHint');
   templateHint.hidden = !$('template').checked;
@@ -377,6 +396,34 @@ function pairs(id, title) {
     if (!name || typeof value !== 'string') throw new Error(`${title}的名称不能为空，值必须是字符串。`);
     return { name, value };
   });
+}
+function bodyCondition(requestFormat) {
+  const mode = $('matchBodyMode').value;
+  if (mode === 'native') {
+    if (requestFormat === 'xml') return { body: readXml('matchBody', '请求体匹配条件', true) };
+    const body = parseJson('matchBody', '请求体匹配条件');
+    if (body !== null && (typeof body !== 'object' || Array.isArray(body) || MockJSON.isNumber(body))) {
+      throw new Error('请求体匹配条件需为 JSON 对象，或用 null 表示不限。');
+    }
+    return { body };
+  }
+  if (mode === 'xpath' && requestFormat !== 'xml') throw new Error('XPath 匹配需要 XML 请求体。');
+  if (mode === 'jsonpath' && requestFormat !== 'json') throw new Error('JSONPath 匹配需要 JSON 请求体。');
+  const expression = $('matchBody').value;
+  if (!expression.trim() && (mode !== 'regex' || !expression)) {
+    $('matchBody').focus();
+    throw new Error('请填写请求体匹配表达式。');
+  }
+  const condition = { mode, expression };
+  if (mode !== 'regex' && $('matchBodyExpected').value.trim()) {
+    const value = parseJson('matchBodyExpected', '期望值');
+    if (mode === 'xpath' && typeof value !== 'string') throw new Error('XPath 期望值需要填写 JSON 字符串，例如 "paid"。');
+    condition.expected = { value };
+  }
+  if (mode === 'xpath' && $('matchNamespaces').value.trim()) {
+    condition.namespaces = pairs('matchNamespaces', 'XPath 命名空间').map(({ name, value }) => ({ prefix: name, uri: value }));
+  }
+  return { body_expression: condition };
 }
 function pathParameterName(segment) {
   return segment.startsWith('{') && segment.endsWith('}') ? segment.slice(1, -1) : null;
@@ -445,10 +492,7 @@ function collectRoute() {
   rule.id = $('ruleId').value.trim();
   if (!rule.id || next.rules.some((r, i) => i !== state.rule && r.id === rule.id)) throw new Error('场景 ID 不能为空，也不能与当前接口的其他场景重复。');
   rule.priority = integer('priority', '优先级', -2147483648, 2147483647);
-  const bodyMatch = requestFormat === 'xml'
-    ? readXml('matchBody', '请求体匹配条件', true)
-    : parseJson('matchBody', '请求体匹配条件');
-  if (requestFormat === 'json' && bodyMatch !== null && (typeof bodyMatch !== 'object' || Array.isArray(bodyMatch) || MockJSON.isNumber(bodyMatch))) throw new Error('请求体匹配条件需为 JSON 对象，或用 null 表示不限。');
+  const bodyMatch = bodyCondition(requestFormat);
   const pathMatch = $('matchPath').value.trim() ? pairs('matchPath', 'URL 路径参数') : [];
   for (const { name, value } of pathMatch) {
     if (!pathNames.includes(name) || !value) {
@@ -456,7 +500,7 @@ function collectRoute() {
       throw new Error(`路径参数 ${name} 必须在接口路径中声明，且匹配值不能为空。`);
     }
   }
-  rule.match = { body: bodyMatch, path: pathMatch, query: queryPairs(), headers: pairs('matchHeaders', '请求头匹配条件') };
+  rule.match = { ...bodyMatch, path: pathMatch, query: queryPairs(), headers: pairs('matchHeaders', '请求头匹配条件') };
   const responseFormat = $('responseFormat').value;
   const status = integer('status', '状态码', 200, 599);
   const responseBody = responseFormat === 'xml'
@@ -623,7 +667,9 @@ function fillExample() {
 function updateTestMethod() {
   const noBody = ['GET', 'HEAD'].includes($('testMethod').value);
   $('testBody').disabled = noBody;
-  $('testHint').textContent = `${noBody ? 'GET / HEAD 不发送请求体。' : ''}${state.dirty ? '有未保存修改：测试使用已保存的规则。' : '测试使用服务器上已保存的规则。'}`;
+  const bodyHint = noBody ? 'GET / HEAD 不发送请求体。'
+    : $('matchBodyMode').value !== 'native' ? '请填入符合表达式的请求体。' : '';
+  $('testHint').textContent = bodyHint + (state.dirty ? '有未保存修改：测试使用已保存的规则。' : '测试使用服务器上已保存的规则。');
 }
 function showResultTab(tab) {
   state.resultTab = tab;
@@ -777,11 +823,15 @@ $('copyResult').onclick = async () => {
   catch { const range = document.createRange(); range.selectNodeContents(target); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); notice('已选中响应内容，请按 Ctrl+C 复制。'); }
 };
 for (const id of editorIds) $(id).addEventListener('input', markDirty);
-$('requestFormat').onchange = () => {
-  const match = $('matchBody');
-  if ($('requestFormat').value === 'xml' && match.value.trim() === 'null') match.value = '';
-  if ($('requestFormat').value === 'json' && !match.value.trim()) match.value = 'null';
+$('requestFormat').onchange = $('matchBodyMode').onchange = () => {
+  if ($('matchBodyMode').value === 'native') {
+    const match = $('matchBody');
+    const jsonSubset = $('requestFormat').value === 'json';
+    if (!jsonSubset && match.value.trim() === 'null') match.value = '';
+    if (jsonSubset && !match.value.trim()) match.value = 'null';
+  }
   updateBodyEditors();
+  updateTestMethod();
 };
 $('responseFormat').onchange = updateBodyEditors;
 $('template').onchange = updateBodyEditors;

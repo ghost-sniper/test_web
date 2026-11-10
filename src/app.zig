@@ -111,14 +111,25 @@ pub const App = struct {
                 }
                 return 0;
             };
-            var selected: ?mock.Rule = null;
-            for (route.rules) |rule| {
+            var body_evaluation: mock.body_match.Evaluation = .{ .allocator = self.allocator, .raw = req.body(), .body = body };
+            defer body_evaluation.deinit();
+            var selected: ?*const mock.Rule = null;
+            for (route.rules) |*rule| {
                 if (selected) |current| {
                     if (rule.priority <= current.priority) continue;
                 }
-                const matched = matches(rule.match, body, path_parameters, req) catch |err| switch (err) {
+                const compiled = self.snapshot.body_expressions.getPtr(rule);
+                const matched = matches(rule.match, &body_evaluation, compiled, path_parameters, req) catch |err| switch (err) {
                     error.InvalidEscapeSequence => {
                         try reply(res, 400, "invalid URL query encoding");
+                        return 0;
+                    },
+                    error.BodyExpressionLimit => {
+                        try reply(res, 400, "request body exceeds expression evaluation limits");
+                        return 0;
+                    },
+                    error.InvalidBodyExpressionInput => {
+                        try reply(res, 400, "request body expression could not be evaluated");
                         return 0;
                     },
                     else => return err,
@@ -336,13 +347,19 @@ fn reply(res: *httpz.Response, status: u16, message: []const u8) !void {
     try json(res, .{ .code = status, .message = message });
 }
 
-fn matches(spec: mock.Match, body: std.json.Value, path_parameters: []const mock.Pair, req: *httpz.Request) !bool {
+fn matches(
+    spec: mock.Match,
+    body: *mock.body_match.Evaluation,
+    compiled: ?*const mock.body_match.Compiled,
+    path_parameters: []const mock.Pair,
+    req: *httpz.Request,
+) !bool {
     for (spec.path) |expected| {
         for (path_parameters) |actual| {
             if (std.mem.eql(u8, expected.name, actual.name) and std.mem.eql(u8, expected.value, actual.value)) break;
         } else return false;
     }
-    if (spec.body) |expected| if (!mock.requestBodyMatches(expected, body)) return false;
+    if (spec.body) |expected| if (!mock.requestBodyMatches(expected, body.body)) return false;
     for (spec.headers) |pair| {
         const name = try std.ascii.allocLowerString(req.arena, pair.name);
         if (!std.mem.eql(u8, req.header(name) orelse return false, pair.value)) return false;
@@ -353,6 +370,7 @@ fn matches(spec: mock.Match, body: std.json.Value, path_parameters: []const mock
             if (!std.mem.eql(u8, query.get(pair.name) orelse return false, pair.value)) return false;
         }
     }
+    if (compiled) |matcher| return body.matches(matcher);
     return true;
 }
 

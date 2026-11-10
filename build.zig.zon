@@ -40,6 +40,22 @@
             .url = "https://codeload.github.com/ianprime0509/zig-xml/tar.gz/4beab29d68ab308af4bd12a4fc4187c24fdad0d6",
             .hash = "xml-0.2.2-ZTbP35N4AgAN3HBgWmBp_LAQ0MIPKW17GAGMwx4DHGYK",
         },
+        .jsonpath = .{
+            .url = "https://codeload.github.com/besok/zig-jsonpath/tar.gz/68c323d5af1fb1c84b5a1e5a0304971feb04086d",
+            .hash = "zig_jsonpath-0.1.0-DHV5HuiuAgBsxz1Df11xaRdO_Vm3j1p8RJRZ68lYj6KM",
+        },
+        .xpath = .{
+            .url = "git+https://git.jcollie.dev/jeff/zxpath.git#493ec572814fba54128e328b00bf16abe1440b3d",
+            .hash = "zxpath-0.2.0-6HdWZ8amAgCyrI6LXNsAUc7PZiplw5voDE9I52T7X_g5",
+        },
+        .ztree = .{
+            .url = "git+https://git.jcollie.dev/jeff/ztree.git#a48ee058ff0b0e9a758573a1c8a0fcbcf62ef2cf",
+            .hash = "ztree-0.2.0-Rb9y2YsvAwDe_5M0s33sBst4E6CnPW65wP614UbtTdxa",
+        },
+        .regex = .{
+            .url = "https://codeload.github.com/zoptia/zoptia0regex/tar.gz/8e8f2256e475ff62902586346640876871768a5d",
+            .hash = "zoptia0regex-0.6.0-DssccTEhdAAIzuqokIhbm2WA9HVhaRUDoXXvo0VEfVuo",
+        },
     },
     .paths = .{
         "build.zig",
@@ -50,6 +66,7 @@
         "src",
         "config",
         "README.md",
+        "docs",
         "deploy",
         "tests",
         // For example...
