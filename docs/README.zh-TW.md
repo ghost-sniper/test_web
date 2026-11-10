@@ -211,7 +211,7 @@ Invoke-RestMethod http://127.0.0.1:9080/admin/reload -Method Post -Headers @{ Au
 
 ## 部署到 Linux
 
-systemd 與 Caddy 範例採用 `用戶端 → Caddy HTTPS → 127.0.0.1:9080 → Mock 伺服器`。請在目標伺服器上以管理員權限執行部署指令。
+部署範例採用 `用戶端 → Caddy 或 Nginx（HTTPS）→ 127.0.0.1:9080 → Mock 伺服器`。請在目標伺服器上以管理員權限執行部署指令。
 
 依伺服器的架構建置。第二條指令會交叉編譯 Linux x86_64 執行檔至 `zig-out/linux/bin/test_web`。ARM64 需選擇對應目標，並在目標主機驗證執行檔。
 
@@ -245,6 +245,8 @@ sudo journalctl -u zig-mock -n 50 --no-pager
 
 修改 JSON 後可呼叫重新載入。修改執行檔或環境變數後執行 `sudo systemctl restart zig-mock`。啟動訊息與自動產生的權杖可從 journald 查看。
 
+### Caddy
+
 替換 [Caddy 範例](../deploy/Caddyfile)中的網域，並將站台區塊加入伺服器的 Caddy 設定。將 DNS 指向伺服器，開放 80 和 443 連接埠。
 
 ```sh
@@ -253,6 +255,23 @@ sudo systemctl reload caddy
 ```
 
 預設反向代理會轉送 Mock 請求並封鎖外部對 `/admin` 和 `/viewer` 的存取。使用 `/healthz` 和一個範例路由檢查 HTTPS。可透過 `ssh -L 19080:127.0.0.1:9080 user@server` 從本機 19080 連接埠存取管理介面與目錄，或使用[替代 Caddy 範例](../deploy/Caddyfile.admin.example)透過 HTTPS 提供存取。管理 API 仍需要權杖，可連上網域的訪客能檢視目錄。
+
+### Nginx
+
+對外提供 Mock 端點時，使用[預設 Nginx 設定](../deploy/nginx.conf.example)。此設定會封鎖 `/admin`、`/viewer` 及其子路徑。若要透過 HTTPS 存取這兩個頁面，請改用[管理版設定](../deploy/nginx.admin.conf.example)。管理 API 需要權杖，唯讀目錄無須登入。
+
+將網域 DNS 指向伺服器，開放 80 和 443 連接埠，並取得該網域的 TLS 憑證。只安裝其中一份設定，放在 Nginx 的 `http` 區塊所包含的目錄中，例如 `/etc/nginx/conf.d/`。修改兩處 `server_name mock.example.com`，將 `ssl_certificate` 和 `ssl_certificate_key` 指向實際憑證鏈與私密金鑰。
+
+```sh
+# Use deploy/nginx.admin.conf.example as the source for the admin variant.
+sudo install -m 0644 deploy/nginx.conf.example /etc/nginx/conf.d/zig-mock.conf
+sudoedit /etc/nginx/conf.d/zig-mock.conf
+sudo nginx -t
+sudo systemctl reload nginx
+curl --fail https://mock.example.com/healthz
+```
+
+兩份設定都將 HTTP 重新導向至 HTTPS，轉送時保留原始路徑編碼與查詢字串。Nginx 會以觀察到的用戶端位址覆寫傳入的 `X-Forwarded-For`。若要在本機代理後依用戶端限流，請在 Mock 設定加入 `"trusted_proxies": ["127.0.0.1"]` 並重新載入。[Nginx 代理模組](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
 
 服務不會記錄請求本文或手動設定的權杖。如需限制 Mock 存取，可在反向代理設定存取控制。
 

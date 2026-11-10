@@ -211,7 +211,7 @@ The peer address identifies the client by default. Set `trusted_proxies`, for ex
 
 ## Deploy on Linux
 
-The provided systemd and Caddy examples use `Client → Caddy HTTPS → 127.0.0.1:9080 → Mock server`. Run the deployment commands on the target server with administrative privileges.
+The deployment examples use `Client → Caddy or Nginx (HTTPS) → 127.0.0.1:9080 → Mock server`. Run the deployment commands on the target server with administrative privileges.
 
 Build for the server's architecture. The second command cross-compiles a Linux x86_64 executable to `zig-out/linux/bin/test_web`. Use the matching target for ARM64 and verify the executable on the target host.
 
@@ -245,6 +245,8 @@ If an existing systemd installation stores its configuration at `/etc/zig-mock/m
 
 For JSON changes, call reload. Changes to the executable or environment require `sudo systemctl restart zig-mock`. Startup output, including a generated token, is available through journald.
 
+### Caddy
+
 Replace the domain in [the Caddy example](deploy/Caddyfile) and merge the site block into the server's Caddy configuration. Point DNS at the server and open ports 80 and 443.
 
 ```sh
@@ -253,6 +255,23 @@ sudo systemctl reload caddy
 ```
 
 The default proxy example forwards mock requests and blocks public access to `/admin` and `/viewer`. Verify HTTPS with `/healthz` and a sample route. Access the console and catalog through `ssh -L 19080:127.0.0.1:9080 user@server` and local port 19080, or use [the alternative Caddy example](deploy/Caddyfile.admin.example) to expose them over HTTPS. On that configuration, the admin API still requires a token and any visitor who can reach the domain can read the catalog.
+
+### Nginx
+
+Use [the default Nginx site](deploy/nginx.conf.example) for public mock traffic. It blocks `/admin`, `/viewer` and their subpaths. Use [the admin variant](deploy/nginx.admin.conf.example) instead to expose both pages over HTTPS. In that variant the admin API requires a token and the read-only catalog is accessible without one.
+
+Point DNS at the server, open ports 80 and 443, and obtain a TLS certificate for the domain. Install only one variant in a directory Nginx includes inside its `http` block, commonly `/etc/nginx/conf.d/`. Replace both occurrences of `server_name mock.example.com` and set `ssl_certificate` and `ssl_certificate_key` to the issued certificate chain and private key.
+
+```sh
+# Use deploy/nginx.admin.conf.example as the source for the admin variant.
+sudo install -m 0644 deploy/nginx.conf.example /etc/nginx/conf.d/zig-mock.conf
+sudoedit /etc/nginx/conf.d/zig-mock.conf
+sudo nginx -t
+sudo systemctl reload nginx
+curl --fail https://mock.example.com/healthz
+```
+
+Both variants redirect HTTP to HTTPS and preserve encoded paths and query strings when forwarding to the loopback backend. They replace the incoming `X-Forwarded-For` with the address Nginx observed. To apply per-client rate limits behind this local proxy, set `"trusted_proxies": ["127.0.0.1"]` in the Mock configuration and reload it. [Nginx proxy module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
 
 The service logs neither request bodies nor manually configured tokens. Use the reverse proxy to apply access controls to mock traffic when needed.
 

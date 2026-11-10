@@ -211,7 +211,7 @@ Standardmäßig gilt die IP der Verbindung als Clientadresse. Tragen Sie in `tru
 
 ## Bereitstellung unter Linux
 
-Die systemd- und Caddy-Beispiele verwenden `Client → Caddy HTTPS → 127.0.0.1:9080 → Mockserver`. Führen Sie die Bereitstellungsbefehle mit Administratorrechten auf dem Zielserver aus.
+Die Bereitstellungsbeispiele verwenden `Client → Caddy oder Nginx (HTTPS) → 127.0.0.1:9080 → Mockserver`. Führen Sie die Bereitstellungsbefehle mit Administratorrechten auf dem Zielserver aus.
 
 Bauen Sie für die Architektur des Servers. Der zweite Befehl erstellt per Cross-Compilation `zig-out/linux/bin/test_web` für Linux x86_64. Wählen Sie für ARM64 das passende Ziel und prüfen Sie das Programm auf dem Zielserver.
 
@@ -245,6 +245,8 @@ Verwendet ein bestehender systemd-Dienst `/etc/zig-mock/mock.json`, kopieren Sie
 
 Laden Sie die Konfiguration nach JSON-Änderungen neu. Änderungen am Programm oder an der Umgebung erfordern `sudo systemctl restart zig-mock`. Startmeldungen und das erzeugte Token sind über journald verfügbar.
 
+### Caddy
+
 Ersetzen Sie die Domain im [Caddy-Beispiel](../deploy/Caddyfile) und übernehmen Sie den Site-Block in die Caddy-Konfiguration des Servers. Lassen Sie DNS auf den Server zeigen und öffnen Sie die Ports 80 und 443.
 
 ```sh
@@ -253,6 +255,23 @@ sudo systemctl reload caddy
 ```
 
 Das Standardbeispiel leitet Mock-Anfragen weiter und sperrt öffentlichen Zugriff auf `/admin` und `/viewer`. Prüfen Sie HTTPS mit `/healthz` und einer Beispielroute. Verwenden Sie `ssh -L 19080:127.0.0.1:9080 user@server` und den lokalen Port 19080 für Konsole und Katalog oder das [alternative Caddy-Beispiel](../deploy/Caddyfile.admin.example), um beide über HTTPS bereitzustellen. Die Admin-API benötigt dann weiterhin ein Token. Besucher mit Zugriff auf die Domain können den Katalog lesen.
+
+### Nginx
+
+Verwenden Sie für öffentliche Mock-Routen [die Nginx-Standardkonfiguration](../deploy/nginx.conf.example). Sie sperrt `/admin`, `/viewer` und deren Unterpfade. Sollen beide Seiten über HTTPS erreichbar sein, verwenden Sie stattdessen [die Admin-Variante](../deploy/nginx.admin.conf.example). Die Admin-API benötigt ein Token, der schreibgeschützte Katalog ist ohne Anmeldung erreichbar.
+
+Richten Sie DNS auf den Server, öffnen Sie die Ports 80 und 443 und besorgen Sie ein TLS-Zertifikat für die Domain. Installieren Sie nur eine Variante in einem Verzeichnis, das Nginx im `http`-Block einbindet, üblicherweise `/etc/nginx/conf.d/`. Ersetzen Sie beide Vorkommen von `server_name mock.example.com` und geben Sie bei `ssl_certificate` und `ssl_certificate_key` die Zertifikatskette und den privaten Schlüssel an.
+
+```sh
+# Use deploy/nginx.admin.conf.example as the source for the admin variant.
+sudo install -m 0644 deploy/nginx.conf.example /etc/nginx/conf.d/zig-mock.conf
+sudoedit /etc/nginx/conf.d/zig-mock.conf
+sudo nginx -t
+sudo systemctl reload nginx
+curl --fail https://mock.example.com/healthz
+```
+
+Beide Varianten leiten HTTP auf HTTPS um und erhalten kodierte Pfade und Query-Zeichenfolgen beim Weiterleiten. Nginx ersetzt den eingehenden Header `X-Forwarded-For` durch die beobachtete Verbindungsadresse. Setzen Sie für Ratenbegrenzung pro Client hinter diesem lokalen Proxy `"trusted_proxies": ["127.0.0.1"]` in der Mock-Konfiguration und laden Sie sie neu. [Nginx-Proxy-Modul](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
 
 Der Dienst protokolliert keine Anfrageinhalte oder manuell gesetzten Token. Bei Bedarf lassen sich Zugriffsregeln für Mock-Anfragen am Reverse-Proxy einrichten.
 

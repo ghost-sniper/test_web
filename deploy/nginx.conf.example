@@ -1,0 +1,39 @@
+# Include in nginx's http context. Replace the domain and certificate paths.
+server {
+    listen 80;
+    server_name mock.example.com;
+    return 308 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name mock.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/mock.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mock.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Match the upstream HTTP parser limit. The Mock service also checks each request.
+    client_max_body_size 4m;
+    proxy_http_version 1.1;
+    proxy_read_timeout 60s;
+    proxy_request_buffering on;
+    proxy_cache off;
+    proxy_intercept_errors off;
+    proxy_redirect off;
+    proxy_ignore_headers X-Accel-Redirect;
+
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # Replace client-supplied forwarding headers with the address nginx observed.
+    proxy_set_header X-Forwarded-For $remote_addr;
+
+    location ~ ^/(admin|viewer)(/|$) {
+        return 404;
+    }
+
+    location / {
+        # Omitting the URI preserves percent-encoded paths and query parameters.
+        proxy_pass http://127.0.0.1:9080;
+    }
+}

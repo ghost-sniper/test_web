@@ -211,7 +211,7 @@ L’adresse de la connexion identifie le client par défaut. Définissez `truste
 
 ## Déploiement sous Linux
 
-Les exemples systemd et Caddy suivent le schéma `Client → Caddy HTTPS → 127.0.0.1:9080 → serveur Mock`. Exécutez les commandes de déploiement sur le serveur cible avec les privilèges d’administration.
+Les exemples de déploiement suivent le schéma `Client → Caddy ou Nginx (HTTPS) → 127.0.0.1:9080 → serveur Mock`. Exécutez les commandes de déploiement sur le serveur cible avec les privilèges d’administration.
 
 Compilez pour l’architecture du serveur. La deuxième commande produit `zig-out/linux/bin/test_web` pour Linux x86_64 par compilation croisée. Pour ARM64, choisissez la cible correspondante et vérifiez le résultat sur le serveur cible.
 
@@ -245,6 +245,8 @@ Si un service systemd existant utilise `/etc/zig-mock/mock.json`, copiez ce fich
 
 Rechargez la configuration après les changements JSON. Un changement de l’exécutable ou de l’environnement exige `sudo systemctl restart zig-mock`. Les messages de démarrage et le jeton généré sont disponibles dans journald.
 
+### Caddy
+
 Remplacez le domaine dans [l’exemple Caddy](../deploy/Caddyfile) et ajoutez le bloc de site à la configuration du serveur. Faites pointer le DNS vers le serveur et ouvrez les ports 80 et 443.
 
 ```sh
@@ -253,6 +255,23 @@ sudo systemctl reload caddy
 ```
 
 L’exemple par défaut transmet les requêtes Mock et bloque l’accès public à `/admin` et `/viewer`. Vérifiez HTTPS avec `/healthz` et une route d’exemple. Accédez à la console et au catalogue via `ssh -L 19080:127.0.0.1:9080 user@server` et le port local 19080, ou utilisez [l’autre exemple Caddy](../deploy/Caddyfile.admin.example) pour les publier en HTTPS. Dans ce cas, l’API d’administration exige toujours un jeton et les visiteurs pouvant joindre le domaine peuvent consulter le catalogue.
+
+### Nginx
+
+Pour publier les routes Mock, utilisez [la configuration Nginx par défaut](../deploy/nginx.conf.example). Elle bloque `/admin`, `/viewer` et leurs sous-chemins. Pour rendre les deux pages accessibles en HTTPS, utilisez plutôt [la variante avec administration](../deploy/nginx.admin.conf.example). L’API d’administration exige un jeton et le catalogue en lecture seule est accessible sans connexion.
+
+Pointez le DNS vers le serveur, ouvrez les ports 80 et 443 et obtenez un certificat TLS pour le domaine. Installez une seule variante dans un répertoire inclus dans le bloc `http` de Nginx, généralement `/etc/nginx/conf.d/`. Remplacez les deux occurrences de `server_name mock.example.com` et indiquez la chaîne de certificats et la clé privée dans `ssl_certificate` et `ssl_certificate_key`.
+
+```sh
+# Use deploy/nginx.admin.conf.example as the source for the admin variant.
+sudo install -m 0644 deploy/nginx.conf.example /etc/nginx/conf.d/zig-mock.conf
+sudoedit /etc/nginx/conf.d/zig-mock.conf
+sudo nginx -t
+sudo systemctl reload nginx
+curl --fail https://mock.example.com/healthz
+```
+
+Les deux variantes redirigent HTTP vers HTTPS et conservent les chemins encodés et les chaînes de requête lors du transfert. Nginx remplace l’en-tête entrant `X-Forwarded-For` par l’adresse de connexion qu’il a observée. Pour limiter le débit par client derrière ce proxy local, ajoutez `"trusted_proxies": ["127.0.0.1"]` à la configuration Mock et rechargez-la. [Module proxy de Nginx](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
 
 Le service ne journalise ni les corps de requête ni les jetons configurés manuellement. Configurez le contrôle d’accès au trafic Mock dans le proxy inverse si nécessaire.
 

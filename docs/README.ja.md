@@ -211,7 +211,7 @@ Invoke-RestMethod http://127.0.0.1:9080/admin/reload -Method Post -Headers @{ Au
 
 ## Linux へのデプロイ
 
-systemd と Caddy のサンプルは `クライアント → Caddy HTTPS → 127.0.0.1:9080 → モックサーバー` の構成を想定しています。デプロイコマンドは対象サーバーで管理者権限を使って実行します。
+デプロイ例は `クライアント → Caddy または Nginx（HTTPS）→ 127.0.0.1:9080 → モックサーバー` の構成を想定しています。デプロイコマンドは対象サーバーで管理者権限を使って実行します。
 
 サーバーのアーキテクチャ向けにビルドします。2 番目のコマンドは Linux x86_64 向けにクロスコンパイルし、`zig-out/linux/bin/test_web` を作成します。ARM64 では対応するターゲットを指定し、実行ファイルを対象サーバーで検証します。
 
@@ -245,6 +245,8 @@ sudo journalctl -u zig-mock -n 50 --no-pager
 
 JSON の変更は再読み込みで反映します。実行ファイルまたは環境変数の変更時は `sudo systemctl restart zig-mock` を実行します。自動生成トークンなどの起動ログは journald で確認できます。
 
+### Caddy
+
 [Caddy のサンプル](../deploy/Caddyfile)のドメインを変更し、サーバーの Caddy 設定にサイトブロックを追加します。DNS をサーバーに向け、80 と 443 ポートを開きます。
 
 ```sh
@@ -253,6 +255,23 @@ sudo systemctl reload caddy
 ```
 
 既定のプロキシ例はモックリクエストを転送し、`/admin` と `/viewer` への外部アクセスを遮断します。`/healthz` とサンプルルートで HTTPS を確認します。`ssh -L 19080:127.0.0.1:9080 user@server` でローカルの 19080 ポートから管理画面とカタログに接続するか、[別の Caddy サンプル](../deploy/Caddyfile.admin.example)で HTTPS 公開できます。公開する場合も管理 API にはトークンが必要で、ドメインにアクセスできる利用者はカタログを閲覧できます。
+
+### Nginx
+
+モックルートを公開するには、[既定の Nginx 設定](../deploy/nginx.conf.example)を使用します。`/admin`、`/viewer` とそれぞれの配下は遮断されます。両方のページを HTTPS で公開するには、代わりに[管理画面付きの設定](../deploy/nginx.admin.conf.example)を使用します。管理 API にはトークンが必要で、読み取り専用カタログはログインなしで閲覧できます。
+
+DNS をサーバーに向け、80 と 443 ポートを開き、ドメインの TLS 証明書を用意します。Nginx の `http` ブロックで読み込まれるディレクトリー（通常は `/etc/nginx/conf.d/`）に、いずれか一方の設定を置きます。`server_name mock.example.com` を 2 か所変更し、`ssl_certificate` と `ssl_certificate_key` に証明書チェーンと秘密鍵のパスを指定します。
+
+```sh
+# Use deploy/nginx.admin.conf.example as the source for the admin variant.
+sudo install -m 0644 deploy/nginx.conf.example /etc/nginx/conf.d/zig-mock.conf
+sudoedit /etc/nginx/conf.d/zig-mock.conf
+sudo nginx -t
+sudo systemctl reload nginx
+curl --fail https://mock.example.com/healthz
+```
+
+両方の設定で HTTP は HTTPS にリダイレクトされ、エンコード済みのパスとクエリ文字列はそのままバックエンドに転送されます。Nginx は受信した `X-Forwarded-For` を、実際に確認した接続元アドレスで上書きします。同じホスト上の Nginx を経由してクライアント別にレート制限するには、モック設定に `"trusted_proxies": ["127.0.0.1"]` を追加して再読み込みします。[Nginx のプロキシモジュール](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
 
 サービスはリクエストボディや手動設定したトークンをログに残しません。モックへのアクセス制限が必要な場合はリバースプロキシで設定します。
 
